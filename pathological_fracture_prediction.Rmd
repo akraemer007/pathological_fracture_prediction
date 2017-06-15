@@ -11,6 +11,7 @@ library(magrittr)
 library(stringr)
 devtools::install_github('kidman007/kraemR')
 library(kraemR)
+library(hrbrthemes)
 ```
 
 Download file from: [https://drive.google.com/open?id=0B4W_zSMkDcS9SlRrTXZlLVBGU3M](https://drive.google.com/open?id=0B4W_zSMkDcS9SlRrTXZlLVBGU3M) and save in your working directory.
@@ -151,7 +152,7 @@ var_max_answer_check <- function(var) {
 # loop by different variables
 map_dbl(binary_vars_unique, var_max_answer_check) %>% 
   as_tibble() %>% 
-  count(value)x`x`
+  count(value)
 ```
 
 Still trying to understand these variables. They can have 5 that are coded 1, or they can have things that are coded without the "vanilla" version of the variable being coded.
@@ -161,21 +162,121 @@ Still trying to understand these variables. They can have 5 that are coded 1, or
 ## Cleaning data
 Dealing with NAs
 
-First, let's take a look the age distribution before we simply 
+First, let's take a look the age distribution before we simply take the median.
 ```{r}
 df_raw %>% 
   ggplot(aes(age)) +
-    geom_histogram(binwidth = 1)
+    geom_histogram(binwidth = 1) +
+    labs(title = '85 Year Old Spike') +
+    theme_ipsum()
 ```
+
+It looks like there is an incredible amount of older patients. I'm guessing that this is an error.
+
+```{r}
+(max_age <- max(df_raw$age, na.rm = TRUE))
+
+df_raw %>% 
+  mutate(is_max_age = if_else(age == max_age, 'y','n')) %>% 
+  count_pct(is_max_age) %>% 
+  select(-pct)
+```
+
+Odd, around 10% of patients have the age of exactly 85. I don't know what to do about this yet, because even though it's clearly a spike, it looks like it might be a normal distribution if it continued above. If that's the case, I don't think I should overwrite that info.
+
+```{r}
+# I don't know what to do about the crazy 85 thing.
+```
+
+
+Okay, so how many people actually have the issue?
 
 ```{r}
 df_raw %>% 
+  ggplot(aes(result)) +
+    geom_bar() +
+    labs(title = 'result distribution') +
+    theme_ipsum()
+```
+
+Very few, it turns out. `r df_raw %>% count_pct(result) %>% .[2,4] %>% pull` to be specific.
+
+
+
+Let's run through my (likely very unhelpful) chisq test across all of the variables.
+
+```{r}
+chisq_pvalues <- df_raw %>%
+  select(one_of(binary_vars)) %>%
+  map(table, factor(df_raw$result)) %>%
+  map(chisq.test) %>%
+  map_dbl("p.value") %>%                   # extract p-value from output
+  broom::tidy() %>%                        # convert from a list to a dataframe
+  mutate(p_value = round(x,4)) %>%
+  select(-x)
 ```
 
 
 ```{r}
-median()
+df_raw %>% 
+  filter(result == 'yes') %>% 
+  group_by(result) %>% 
+  summarise_at(binary_vars, sum) %>% 
+  select(-result) %>% 
+  t %>%
+  as.data.frame %>% 
+  rownames_to_column() %>%
+  rename(positive_count = V1) %>% 
+  arrange(desc(positive_count))
 ```
+
+In this section, I try to see if there is a bias towards certain kinds of a permutations. I'm not super happy with this code. 
+
+```{r}
+# 
+# all of this is garbage code
+# 
+
+suffixes_plus <- c('Historic', 'Negated', 'Uncertain', 'Surgical', 'Basic')
+
+# I should really just make a function for this
+flagged_binary_vars <- binary_vars %>% 
+  as_tibble() %>% 
+  mutate(permutation = '',
+         permutation = if_else(str_detect(value, 'Historic'), 'Historic', coalesce(permutation, '')), 
+         permutation = if_else(str_detect(value, 'Negated'), 'Negated', coalesce(permutation, '')),
+         permutation = if_else(str_detect(value, 'Uncertain'), 'Uncertain', coalesce(permutation, '')),
+         permutation = if_else(str_detect(value, 'Surgical'), 'Surgical', coalesce(permutation, '')),
+         permutation = if_else(permutation == '', 'Basic', permutation)
+  )
+
+sum_permutation_type <- function(suf, df = df_raw) {
+  selected_col <- flagged_binary_vars %>% 
+    filter(permutation == suf) %>% 
+    pull(value)
+  df %>% 
+    select(one_of(selected_col)) %>% 
+    rowSums() %>% 
+    sum()
+}
+
+total_permutations <- map_dbl(suffixes_plus, sum_permutation_type) %>% 
+                        tibble(count = .,
+                               permutation = suffixes_plus)
+total_permutations %>% 
+  mutate(pct = round(count / sum(count),4)) %>% 
+  arrange(desc(pct))
+  
+yes_permutations <- map_dbl(suffixes_plus, sum_permutation_type, df = filter(df_raw, result == 'yes')) %>% 
+                      tibble(count = .,
+                             permutation = suffixes_plus) 
+yes_permutations %>% 
+  mutate(pct = round(count / sum(count),4)) %>% 
+  arrange(desc(pct))
+```
+
+It looks like there isn't a signficicant difference between the distributions of permutation field type.
+
 
 
 
