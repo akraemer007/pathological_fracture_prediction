@@ -5,10 +5,177 @@ output: html_notebook
 
 pathological_fracture_prediction
 
-```{r}
-plot(cars)
+```{r packages}
+library(tidyverse)
+library(magrittr)
+library(stringr)
+devtools::install_github('kidman007/kraemR')
+library(kraemR)
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+Download file from: [https://drive.google.com/open?id=0B4W_zSMkDcS9SlRrTXZlLVBGU3M](https://drive.google.com/open?id=0B4W_zSMkDcS9SlRrTXZlLVBGU3M) and save in your working directory.
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file).
+```{r data_import}
+# I'll figure this out later if I have time
+# if (!file.exists("PathologicalFracturesDataSet.csv")) {
+#   id <- "0B4W_zSMkDcS9SlRrTXZlLVBGU3M" # google file ID
+#   read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download", id))
+# }
+
+df_raw <- read_csv("PathologicalFracturesDataSet.csv")
+
+```
+
+```{r}
+glimpse(df_raw)
+```
+
+```{r, include=FALSE}
+row_count_no_na <- nrow(drop_na(df_raw))
+```
+
+There are `r nrow(df_raw) - row_count_no_na` rows with na values.
+
+Which columns have NAs?
+```{r}
+df_raw %>% 
+  map_lgl(anyNA) %>% # loop all columns with an anyNA check
+  .[. == TRUE]
+```
+Looks like just age and Calcium.
+
+```{r}
+paste(nrow(df_raw[is.na(df_raw$age), ]), 'age records are NA')
+paste(nrow(df_raw[is.na(df_raw$Calcium), ]), 'Calcium records are NA')
+```
+
+Are there any duplicate visit IDs?
+
+```{r}
+df_raw %>% 
+  count(visitId) %>% 
+  filter(n > 1) %>% 
+  nrow %>% 
+  paste(., 'duplicate visitIDs')
+```
+
+
+What numbers are in the variables? Are they all zeroes and ones? I'm removing the fields I can already tell are not zeroes and ones. 
+
+```{r}
+non_binary_vars <- c('visitId','gender', 'age', 'result', 'xrayTestService', 'petScanService', 'ctTestService', 'Calcium')
+
+max_cols <- df_raw %>% 
+  select(-visitId,
+         -age,
+         -result,
+         -xrayTestService,
+         -petScanService,
+         -ctTestService,
+         -Calcium) %>% 
+  summarise_all(max) %>% 
+  t %>%
+  as.data.frame %>% 
+  rownames_to_column() %>% 
+  rename(max_value = V1)
+
+max_cols %>% 
+  arrange(desc(max_value))
+
+binary_vars <- max_cols %>% 
+  filter(max_value %in% c(0,1)) %>% 
+  pull(rowname)
+
+```
+
+As I expected, most of the variables are binary. It's probably worth noting that over 50 of the binary variables have no records that are a `1`. 
+
+I created the variables `binary_vars` and `non_binary_vars` for later reference
+
+Okay, interesting, apparantly there's a two in gender. Let's find out how many of those there are.
+
+```{r}
+df_raw %>% 
+  count_pct(gender) %>% 
+  select(-pct) %>% 
+  arrange(gender)
+```
+Okay, it looks like there are only 22 cases of `gender = 2`. I'm not sure what I want to do with that.
+
+Can there numbers in multiple columns? So I start with the first variable set: `C1882062`, which is apparantly "Neoplastic Syndrome."
+
+```{r}
+df_raw %>% 
+  select(starts_with('C1882062')) %>%
+  mutate(var_sum = C1882062 + C1882062Historic + C1882062Negated + C1882062Uncertain + C1882062Surgical) %>% 
+  # filter(var_sum > 0 ) %>% 
+  arrange(desc(var_sum)) %>% 
+  head
+
+# 
+df_raw %>%
+  select(starts_with('C1882062')) %>%
+  mutate(var_sum = C1882062 + C1882062Historic + C1882062Negated + C1882062Uncertain + C1882062Surgical) %>%
+  filter(
+         # C1882062 == 0,
+         var_sum > 0) %>%
+  arrange(desc(var_sum)) %>%
+  count_pct(C1882062)
+
+```
+
+Okay, this is interesting there are no examples for `C1882062` that have all 5. Let me check this across all of the non-binary variables.
+
+```{r}
+
+suffixes <- c('Historic', 'Negated', 'Uncertain', 'Surgical')
+
+length(binary_vars) / 5 # looks like there are the correct number of columns
+  
+# get unique binary vars 
+binary_vars_unique <- binary_vars %>% 
+  str_replace('Historic', '') %>% 
+  str_replace('Negated', '') %>% 
+  str_replace('Uncertain', '') %>% 
+  str_replace('Surgical', '') %>% 
+  unique
+
+# get the max number of `1s` a variable can have across the different types
+var_max_answer_check <- function(var) {
+  df_raw %>% 
+  select(starts_with(var)) %>% 
+  rowSums %>% 
+  max
+}
+
+# loop by different variables
+map_dbl(binary_vars_unique, var_max_answer_check) %>% 
+  as_tibble() %>% 
+  count(value)x`x`
+```
+
+Still trying to understand these variables. They can have 5 that are coded 1, or they can have things that are coded without the "vanilla" version of the variable being coded.
+
+
+
+## Cleaning data
+Dealing with NAs
+
+First, let's take a look the age distribution before we simply 
+```{r}
+df_raw %>% 
+  ggplot(aes(age)) +
+    geom_histogram(binwidth = 1)
+```
+
+```{r}
+df_raw %>% 
+```
+
+
+```{r}
+median()
+```
+
+
+
