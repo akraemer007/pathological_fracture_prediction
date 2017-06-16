@@ -6,10 +6,12 @@ output: html_notebook
 pathological_fracture_prediction
 
 ```{r packages}
+library(caret)
 library(tidyverse)
+library(dplyr)
 library(magrittr)
 library(stringr)
-devtools::install_github('kidman007/kraemR')
+# devtools::install_github('kidman007/kraemR')
 library(kraemR)
 library(hrbrthemes)
 ```
@@ -142,8 +144,8 @@ binary_vars_unique <- binary_vars %>%
   unique
 
 # get the max number of `1s` a variable can have across the different types
-var_max_answer_check <- function(var) {
-  df_raw %>% 
+var_max_answer_check <- function(var, df = df_raw) {
+  df %>% 
   select(starts_with(var)) %>% 
   rowSums %>% 
   max
@@ -152,7 +154,13 @@ var_max_answer_check <- function(var) {
 # loop by different variables
 map_dbl(binary_vars_unique, var_max_answer_check) %>% 
   as_tibble() %>% 
-  count(value)
+  count(value) %>% 
+  mutate(pct = round(n/ sum(n),4))
+
+map_dbl(binary_vars_unique, var_max_answer_check, df = filter(df_raw, result == 'yes')) %>% 
+  as_tibble() %>% 
+  count(value) %>% 
+  mutate(pct = round(n/ sum(n),4))
 ```
 
 Still trying to understand these variables. They can have 5 that are coded 1, or they can have things that are coded without the "vanilla" version of the variable being coded.
@@ -277,6 +285,163 @@ yes_permutations %>%
 
 It looks like there isn't a signficicant difference between the distributions of permutation field type.
 
+
+# data cleaning
+
+```{r filling_nas}
+# gender == 2 has no positive outcomes. I'll just remove them from the analysis
+# df_raw %>% 
+#   filter(gender == 2,
+#          result == 'yes') %>% 
+#   nrow
+
+median_age <- median(df_raw$age, na.rm = TRUE)
+median_calcium <- median(df_raw$Calcium, na.rm = TRUE)
+
+df <- df_raw %>%
+  replace_na(list(age = median_age, Calcium = median_calcium)) %>% 
+  filter(gender != 2) %>% 
+  mutate_at(binary_vars, as.factor) %>% 
+  mutate_at(c('gender', 'result'), as.factor) %>% 
+  select(-visitId)
+
+
+# train <- data[1:800,]
+# test <- data[801:889,]
+
+# what should the p be? how many times?
+
+
+# library(caret)
+set.seed(1991)
+trainIndex <- caret::createDataPartition(df$result, p = .1, 
+                                         list = FALSE, 
+                                         times = 1)
+
+train_raw <- df[ trainIndex,]
+test_raw  <- df[-trainIndex,]
+
+# df_cv <- df %>% 
+#   select(-Doors, -Chevy, -sedan) %>%
+#   crossv_kfold(10)
+```
+
+There are a lot of variables. A number of the factored variables only have one factor level. I get rid of them here.
+
+```{r}
+# variables with more than one 
+usable_factors <- train_raw %>% 
+  select_if(is.factor) %>% 
+  map_dbl(~length(levels(.))) %>% 
+  enframe() %>% 
+  filter(value > 1) %>% 
+  pull(name)
+
+# used for getting the other non-factor variables 
+not_factor <- function(x) {!is.factor(x)}
+
+model_variables <- train_raw %>% 
+  select_if(not_factor) %>% 
+  names %>% 
+  c(.,usable_factors)
+
+train <- train_raw %>% 
+  dplyr::select(one_of(usable_factors))
+
+test <- test_raw
+```
+
+
+# Modeling
+
+First approach is a basic Naive Bayes model
+```{r}
+# train a naive bayes model
+# model <- train(result~., data=train, method="nb")
+library(klaR)
+set.seed(1991)
+model_nb_1 <- NaiveBayes(result~., data=train)
+
+summary(model_nb_1)
+# print(model_nb_1)
+prediction_nb_1 <- predict(model_nb_1, test)
+
+# small function to evaluate the model
+evaluate_model <- function(test, prediction) {
+  test$prediction <- prediction$class
+  
+  test %>% 
+    mutate(check = (result == prediction)) %>% 
+    filter(result == 'yes') %>% 
+    count_pct(check)
+}
+
+evaluate_model(test, prediction_nb_1)
+
+# first run got 44.7%
+
+
+  
+
+# # make predictions
+# x_test <- data_test[,1:4]
+# y_test <- data_test[,5]
+# predictions <- predict(model, x_test)
+# # summarize results
+# confusionMatrix(predictions$class, y_test)
+```
+
+So, that first model could have been better. Let's take a closer look at the variables. Here, I've grabbed the variables 10 variables that have the highest percentage of being a 1 for yes. I'm pretty sure this is a bad way to do things.
+
+```{r}
+
+(top_by_table <- model_nb_1$tables %>% 
+  map_dbl(~.[2,2]) %>% 
+  enframe() %>% 
+  arrange(desc(value)))
+
+# I really don't know what I'm trying to do her anymore. I am very sleepy.
+# df %>% 
+#   filter(result == 'yes') %>% 
+#   mutate_if(is.factor, as.numeric) %>% 
+#   mutate(chk = if_else((C0416980 + C0416980Historic) == 2,1,0),
+#          or_chk = if_else((C0416980  + C0416980Historic) %in% c(1,2) ,1,0)) %>%
+#   summarise_at(c('C0416980', 'C0416980Historic', 'chk', 'or_chk'), sum)
+
+features_nb_2 <- top_by_table %>% 
+  filter(name %in% c('gender', binary_vars_unique)) %>% 
+  slice(1:10) %>% 
+  pull(name)
+
+train_nb_2 <- train %>% 
+  dplyr::select(one_of('result',features_nb_2))
+  
+set.seed(1991)  
+model_nb_2 <- NaiveBayes(result~., data=train_nb_2)
+prediction_nb_2 <- predict(model_nb_2, test)
+
+evaluate_model(test, prediction_nb_1)
+
+```
+
+Woah, that model was way worse. It only got 21.1% accuracy.
+
+I think tomorrow I'll come at this again. I'll try to functionalize some of the work I'm doing here.
+
+
+
+
+logit regression on everything
+remove every variable t val > 1.96
+do it again that is the base for the model
+
+
+Logit would be perfect if I knew the relationship generally
+
+
+naieve bayes -- classic basic, performs well 
+machine learning logit model 
+neural networks -- super sexy 
 
 
 
