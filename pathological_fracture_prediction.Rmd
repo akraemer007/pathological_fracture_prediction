@@ -325,7 +325,7 @@ There are a lot of variables. A number of the factored variables only have one f
 I'm making a function here to make my life easier. I'd like to be able to quickly change the partition and not worry about automatically removing factors that won't have any impact.
 
 ```{r}
-train_test_reset <- function(partition) {
+train_test_reset <- function(partition, df) {
 
   set.seed(1991)
   trainIndex <- caret::createDataPartition(df$result, p = partition, 
@@ -381,7 +381,7 @@ evaluate_model <- function(test, prediction) {
 # train a naive bayes model
 # model <- train(result~., data=train, method="nb")
 
-train_test <- train_test_reset(.1)
+train_test <- train_test_reset(.1, df)
 train <- train_test$train
 test <- train_test$test
 
@@ -405,17 +405,21 @@ evaluate_model(test, prediction_nb_1)
 # confusionMatrix(predictions$class, y_test)
 ```
 
-## Second approach NB 
+## Second approach NB "Best Variables"
 
 So, that first model could have been better. Let's take a closer look at the variables. Here, I've grabbed the variables 10 variables that have the highest percentage of being a 1 for yes. I'm pretty sure this is a bad way to do things.
 
 ```{r}
-
 # using the model output from the last model I get a bunch of outputs. I organize them here
-top_by_table <- model_nb_1$tables %>% 
+(top_by_table <- model_nb_1$tables %>% 
   map_dbl(~.[2,2]) %>% 
   enframe() %>% 
-  arrange(desc(value))
+  arrange(desc(value)))
+
+features_nb_2 <- top_by_table %>% 
+  filter(name %in% c('gender', binary_vars_unique)) %>% 
+  slice(1:10) %>% 
+  pull(name)
 
 # When I was tired, I tried to compare conditions and see their relative permutations. I was getting odd results
 # df %>% 
@@ -425,10 +429,10 @@ top_by_table <- model_nb_1$tables %>%
 #          or_chk = if_else((C0416980  + C0416980Historic) %in% c(1,2) ,1,0)) %>%
 #   summarise_at(c('C0416980', 'C0416980Historic', 'chk', 'or_chk'), sum)
 
-features_nb_2 <- top_by_table %>% 
-  filter(name %in% c('gender', binary_vars_unique)) %>% 
-  slice(1:10) %>% 
-  pull(name)
+```
+
+
+```{r}
 
 train_test <- train_test_reset(.1)
 
@@ -438,7 +442,7 @@ train <- train_test$train %>%
 test <- train_test$test
   
 set.seed(1991)  
-model_nb_2 <- NaiveBayes(result~., data=train_nb_2)
+model_nb_2 <- NaiveBayes(result~., data=train)
 prediction_nb_2 <- predict(model_nb_2, test)
 
 evaluate_model(test, prediction_nb_1)
@@ -448,17 +452,114 @@ evaluate_model(test, prediction_nb_1)
 
 Woah, that model was way worse. It only got 21.1% accuracy.
 
+## Third Approach: NB Combine variables
+
+```{r}
+factor_to_numeric <- function(x) as.numeric(as.character(x))
+
+# create list of dfs for each condition
+row_summed_condtions <- 
+  map(binary_vars_unique, 
+        ~df_unfactored_binary[, str_detect(., colnames(df_unfactored_binary))]
+      ) %>%
+  map(~rowSums(.))
+
+names(row_summed_condtions) <- str_c(binary_vars_unique,"_combined") # name lists for conversion into df
+  
+df_combined <- row_summed_condtions %>% 
+  as_tibble() %>% 
+  map(~if_else(. > 0, 1, 0)) %>% 
+  map(as.factor) %>%
+  bind_cols(df[c('age', 'gender', 'result', 'Calcium','xrayTestService','petScanService','ctTestService')])
+
+```
+
+```{r}
+train_test <- train_test_reset(.1, df_combined)
+
+train <- train_test$train
+test <- train_test$test
+
+set.seed(1991)
+model_nb_3 <- NaiveBayes(result~., data=train)
+prediction_nb_3 <- predict(model_nb_3, test)
+
+evaluate_model(test, prediction_nb_3)
+# 25.3%
+```
+
+
+
+## Fourth Approach: kitchen sink random forest
+
+It's clear that shooting into the dark hasn't been particularly productive. I'll try a random forest to identify what the most important variables are. With those variables, maybe I can come up with a better prediction.
+
+```{r}
+library(randomForest)
+
+train_test <- train_test_reset(.1, df)
+
+train <- train_test$train
+test <- train_test$test
+
+set.seed(1991)
+model_rf_4 <- randomForest(result~., data = train)
+
+prediction_rf_4 <- predict(model_rf_4, test)
+evaluate_model(test, prediction_rf_4)
+```
+
+```{r}
+# Get importance
+importance    <- importance(rf_model)
+varImportance <- data.frame(Variables = row.names(importance), 
+                            Importance = round(importance[ ,'MeanDecreaseGini'],2))
+
+# Create a rank variable based on importance
+rankImportance <- varImportance %>%
+  mutate(Rank = paste0('#',dense_rank(desc(Importance))))
+
+# Use ggplot2 to visualize the relative importance of variables
+ggplot(rankImportance, aes(x = reorder(Variables, Importance), 
+    y = Importance, fill = Importance)) +
+  geom_bar(stat='identity') + 
+  geom_text(aes(x = Variables, y = 0.5, label = Rank),
+    hjust=0, vjust=0.55, size = 4, colour = 'red') +
+  labs(x = 'Variables') +
+  coord_flip() + 
+  theme_few()
+```
+
+
+
+Okay, that one did even worse. Maybe I'll try a neural network before I start picking off variables again.
+
+```{r}
+library(nnet)
+
+train_test <- train_test_reset(.1, df_combined)
+
+train <- train_test$train
+test <- train_test$test
+
+set.seed(1991)
+model_nn_4 <- nnet(result~., data=iris, size=4, decay=0.0001, maxit=500)
+
+```
 
 
 
 
+
+
+# Vishvesh advice
 logit regression on everything
 remove every variable t val > 1.96
 do it again that is the base for the model
 
 
+# Joe's advice
 Logit would be perfect if I knew the relationship generally
-
 
 naieve bayes -- classic basic, performs well 
 machine learning logit model 
