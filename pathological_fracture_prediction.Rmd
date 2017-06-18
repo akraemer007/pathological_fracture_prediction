@@ -30,6 +30,12 @@ df_raw <- read_csv("PathologicalFracturesDataSet.csv")
 ```
 
 ```{r}
+head(df_raw) %>% 
+  View
+```
+
+
+```{r}
 glimpse(df_raw)
 ```
 
@@ -497,7 +503,7 @@ It's clear that shooting into the dark hasn't been particularly productive. I'll
 ```{r}
 library(randomForest)
 
-train_test <- train_test_reset(.1, df)
+train_test <- train_test_reset(.5, df)
 
 train <- train_test$train
 test <- train_test$test
@@ -506,8 +512,18 @@ set.seed(1991)
 model_rf_4 <- randomForest(result~., data = train)
 
 prediction_rf_4 <- predict(model_rf_4, test)
-evaluate_model(test, prediction_rf_4)
+
+prediction_rf_4 %>% 
+  as_tibble() %>% 
+  rename(prediction = value) %>% 
+  bind_cols(., test) %>% 
+  mutate(check = (result == prediction)) %>% 
+  filter(result == 'yes') %>% 
+  count_pct(check)
+
 ```
+Zero results when run with .1???? That seems just wrong
+Zero results when run with .5???? That's just rude.
 
 ```{r}
 # Get importance
@@ -530,27 +546,176 @@ ggplot(rankImportance, aes(x = reorder(Variables, Importance),
   theme_few()
 ```
 
+## fifth Approach: do more weirds stuff to the data
 
+Here I identify rid of all variables that are 'unpopular' in the result = yes subset of the DF. I have one list that is all but 0 and one that is less than 6.
+```{r}
+df_yes <- df %>% 
+  filter(result == 'yes')
+
+
+var_popularity <- function(df, var_id) {
+  df %>% 
+    select(one_of(var_id)) %>%
+    mutate_all(factor_to_numeric) %>% 
+    summarise_all(sum) %>% 
+    t %>%
+    as.data.frame %>% 
+    rownames_to_column() %>% 
+    rename(total_value = V1) %>%
+    arrange(desc(total_value)) %>% 
+    filter(total_value != 0)
+}
+
+binary_vars_pos_df <- var_popularity(df_yes, binary_vars)
+
+binary_vars_pos_df %>% 
+  ggplot(aes(total_value)) + 
+    geom_histogram()
+
+binary_vars_pos_df_6 <- binary_vars_pos %>% 
+  filter(total_value > 5)
+
+binary_vars_pos <- pull(binary_vars_pos_df, rowname)
+binary_vars_pos_6 <- pull(binary_vars_pos_df_6, rowname)
+
+```
+
+Here I combine current and historic.
+
+```{r}
+unique_df <- df %>% 
+  select(one_of(binary_vars_unique))
+
+historical_df <- df %>% 
+  select(ends_with("Historic"))
+
+has_had_df <- bind_cols(unique_df, historical_df) %>%
+  mutate_all(factor_to_numeric)
+
+combine_historical <- function(condtion_code) {
+  has_had_df %>%   
+    select(contains(condtion_code)) %>% 
+    rowSums(.) %>% 
+    as_tibble() %>% 
+    transmute(value = if_else(value == 0, 0, 1 )) %>% 
+    pull
+}
+
+has_had_df <- map(binary_vars_unique, combine_historical)
+names(has_had_df) <- binary_vars_unique
+
+has_had_df <- as_tibble(bort) %>% 
+  mutate_all(as.factor)
+names(has_had_df) <- str_c(binary_vars_unique,'_has_had')
+
+has_had_df <- df %>% 
+  select(-contains('Historic'),
+         -one_of(binary_vars_unique)) %>% 
+  bind_cols(., has_had_df)
+```
+
+Now I prepare the data to only keep the above 5 variables
+
+```{r}
+binary_vars_has_had <- c(binary_vars[!(binary_vars %in% binary_vars_unique)], str_c(binary_vars_unique,'_has_had'))
+binary_vars_has_had <- binary_vars_has_had[!str_detect(binary_vars_has_had,'Historic')]
+
+binary_vars_pos_has_had <- has_had_df %>% 
+  filter(result == 'yes') %>% 
+  var_popularity(., binary_vars_has_had)
+
+binary_vars_pos_df_6_has_had <- binary_vars_pos_has_had %>% 
+  filter(total_value > 5)
+
+binary_vars_pos_6_has_had <- pull(binary_vars_pos_df_6_has_had, rowname)
+
+
+```
+
+
+
+```{r}
+has_had_df_popular <- has_had_df %>% 
+  select(one_of(binary_vars_pos_6_has_had), age, gender, result, xrayTestService, petScanService)
+  
+
+train_test <- train_test_reset(.1, has_had_df_popular)
+train <- train_test$train
+test <- train_test$test
+
+library(klaR)
+set.seed(1991)
+model_nb_5 <- NaiveBayes(result~., data=train)
+
+summary(model_nb_5)
+# print(model_nb_1)
+prediction_nb_5 <- predict(model_nb_5, test)
+
+evaluate_model(test, prediction_nb_5)
+```
+
+
+
+## sixth Approach: nural net kitchen sink
 
 Okay, that one did even worse. Maybe I'll try a neural network before I start picking off variables again.
 
 ```{r}
 library(nnet)
 
-train_test <- train_test_reset(.1, df_combined)
+train_test <- train_test_reset(.1, df)
 
 train <- train_test$train
 test <- train_test$test
 
 set.seed(1991)
-model_nn_4 <- nnet(result~., data=iris, size=4, decay=0.0001, maxit=500)
+model_nn_6 <- nnet(result~., data=train, size=4, decay=0.0001, maxit=500)
 
+# summary(model_nn_6)
+# print(model_nn_6)
+prediction_nn_6 <- predict(model_nn_6, test)
+
+# evaluate_model(test, prediction_nn_6)
+```
+
+## seventh Approach: nural net selected variables
+
+```{r}
+
+train_test <- train_test_reset(.1, has_had_df_popular)
+
+train <- train_test$train
+test <- train_test$test
+
+set.seed(1991)
+model_nn_7 <- nnet(result~., data=train, size=4, decay=0.0001, maxit=500)
+
+# summary(model_nb_5)
+# print(model_nb_1)
+prediction_nn_7 <- predict(model_nn_7, test)
+
+# evaluate_model(test, prediction_nn_7)
 ```
 
 
 
+```{r}
+# MAKE BALANCED THEN DO THIS
+prop.table(table(df$result, df$C0016641)) %>% 
+  min
 
 
+```
+
+
+# micah advice
+balance the training data
+randomize!!! 
+start with 1:1 
+try 1:2 or 1:3
+---logit regression
+---chisq w/ balanced dataset
 
 # Vishvesh advice
 logit regression on everything
@@ -565,5 +730,12 @@ naieve bayes -- classic basic, performs well
 machine learning logit model 
 neural networks -- super sexy 
 
+# Karl advice
+gausian elimination
+sum the projections with each of the row vectors
 
+dot product
+matrix multiplication
+eigen values / vectors 
+diagonalize matrix
 
