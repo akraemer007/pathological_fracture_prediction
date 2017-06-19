@@ -21,8 +21,8 @@ Download file from: [https://drive.google.com/open?id=0B4W_zSMkDcS9SlRrTXZlLVBGU
 ```{r data_import}
 # I'll figure this out later if I have time
 # if (!file.exists("PathologicalFracturesDataSet.csv")) {
-#   id <- "0B4W_zSMkDcS9SlRrTXZlLVBGU3M" # google file ID
-#   read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download", id))
+  id <- "0B4W_zSMkDcS9SlRrTXZlLVBGU3M" # google file ID
+  read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download", id))
 # }
 
 df_raw <- read_csv("PathologicalFracturesDataSet.csv")
@@ -858,9 +858,9 @@ summary(model_l_10)
 
 prediction_l_10 <- predict(model_l_10, train_test$test, type='response')
 
-test$prediction <- prediction_l_10
+train_test$test$prediction <- prediction_l_10
 
-test %>% 
+train_test$test %>% 
   mutate(prediction = if_else(prediction <.5, 'no', 'yes'),
          check = (result == prediction)) %>% 
   group_by(result) %>% 
@@ -873,7 +873,7 @@ train_test <- train_test_reset(.5, df)
 train <- balance_df(train_test$train)
 
 train %<>% 
-  dplyr::select(result, non_binary_vars, one_of(signif_vars_only))
+  dplyr::select(result, one_of(signif_vars_only))
 
 model_l_10 <- glm(result~., family=binomial(link='logit'), 
                  data=train)
@@ -882,12 +882,12 @@ summary(model_l_10)
 
 prediction_l_10 <- predict(model_l_10, train_test$test, type='response')
 
-test$prediction <- prediction_l_10
+train_test$test$prediction <- prediction_l_10
 
-test %>% 
+train_test$test %>% 
   mutate(prediction = if_else(prediction <.5, 'no', 'yes'),
          check = (result == prediction)) %>% 
-  filter(result == 'yes') %>% 
+  group_by(result) %>% 
   count_pct(check)
 ```
 
