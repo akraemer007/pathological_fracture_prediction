@@ -772,7 +772,7 @@ ggplot(test, aes(prediction)) +
 test %>% 
   mutate(prediction = if_else(prediction <.5, 'no', 'yes'),
          check = (result == prediction)) %>% 
-  filter(result == 'yes') %>% 
+  group_by(result) %>% 
   count_pct(check)
 
 ```
@@ -823,8 +823,13 @@ test$prediction <- prediction_l_9
 test %>% 
   mutate(prediction = if_else(prediction <.5, 'no', 'yes'),
          check = (result == prediction)) %>% 
-  filter(result == 'yes') %>% 
+  group_by(result) %>% 
   count_pct(check)
+
+test %>% 
+  mutate(prediction = if_else(prediction <.1, 'no', 'yes'),
+         check = (result == prediction)) %>% 
+  count()
 ```
 
 ## Attempt 9 logit regression remove lots of unhelpful variables
@@ -841,7 +846,7 @@ signif_vars_only <- coef(summary(model_l_9))[,4] %>%  #
 train_test <- train_test_reset(.5, df)
 
 train <- balance_df(train_test$train)
-
+glimpse(train)
 
 train %<>% 
   dplyr::select(result,one_of(signif_vars_only))
@@ -858,8 +863,9 @@ test$prediction <- prediction_l_10
 test %>% 
   mutate(prediction = if_else(prediction <.5, 'no', 'yes'),
          check = (result == prediction)) %>% 
-  filter(result == 'yes') %>% 
+  group_by(result) %>% 
   count_pct(check)
+  
 ```
 
 ```{r}
@@ -884,32 +890,6 @@ test %>%
   filter(result == 'yes') %>% 
   count_pct(check)
 ```
-
-
-# micah advice
-balance the training data
-randomize!!! 
-start with 1:1 
-try 1:2 or 1:3
----logit regression
----chisq w/ balanced dataset
-
-# Vishvesh advice
-logit regression on everything
-remove every variable t val > 1.96
-do it again that is the base for the model
-
-
-# Joe's advice
-Logit would be perfect if I knew the relationship generally
-
-naieve bayes -- classic basic, performs well 
-machine learning logit model 
-neural networks -- super sexy 
-
-# Karl advice
-gausian elimination
-sum the projections with each of the row vectors
 
 dot product
 matrix multiplication
