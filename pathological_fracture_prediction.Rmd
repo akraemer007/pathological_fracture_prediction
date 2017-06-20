@@ -450,10 +450,12 @@ test_base_5 %>%
 
 Here we see the true positive performance is slightly improved, whereas the false negatives have also increased. Relative to Naive Bayes, logit is nice since it gives probabilities instead of raw outputs. Furthermore, it is easy to interpret which variables were the most statistically significant:
 
-```{r, echo=TRUE}
+```{r, echo=FALSE}
 ordered_variables <- broom::tidy(model_l_3) %>% 
   mutate(term = str_sub(term, 1, -2)) %>% 
-  arrange(p.value)
+  arrange(p.value) %>% 
+  rename(z_score = statistic) %>% 
+  mutate_at(2:5, round, 4)
 ordered_variables
 ```
 
