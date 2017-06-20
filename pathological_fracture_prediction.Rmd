@@ -1,27 +1,26 @@
 ---
 title: "Pathological Fracture Prediction"
+author: Andrew Kraemer
+date: 2017-06-20
 output: html_notebook
 ---
 
-The goal of this analysis is to create a model to predict if a patient has a pathologic fracture. A quick Wikipedia search explains:
+# Introduction
 
-> A pathologic fracture is a bone fracture caused by disease that led to weakness of the bone structure. This process is most commonly due to osteoporosis, but may also be due to other pathologies such as: cancer, infection, inherited bone disorders, or a bone cyst.
+I was asked to build a predictive model for pathological fractures. I ran a number of models before getting above 50% accuracy. The key to getting predictions greater than 66% accuracy was under-sampling the training data. In addition to increasing model accuracy, under-sampling also significantly reduced the time it took to train my models. There are a number of approaches, models, and variable manipulations that I did not try here that can be used in future analyses.
 
-I ran a number of models. The key to getting predictions greater than 66% accuracy was undersampling the training data. In additon to increaing model accuracy, undersampling also significatly reduced the time it took to train my models. 
-
-The following is a step-by-step walk through of how I approached the data, how I cleaned the data, how I prepared the training set, and my models. 
+The following is a step-by-step walk through of how I approached, cleaned, prepared, and modeled the data. What is shown is a subset of my code. The full analysis can be found on my [github page](https://github.com/kidman007/pathological_fracture_prediction/blob/full_analysis/pathological_fracture_prediction.Rmd). 
 
 
 ```{r packages, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 library(tidyverse)
-library(dplyr)
 library(magrittr)
 library(stringr)
-# devtools::install_github('hrbrmstr/hrbrmisc')
-library(hrbrmisc)
 # devtools::install_github('hrbrmstr/hrbrthemes')
 library(hrbrthemes)
 ```
+
+# Data First Look
 
 First off, let's import the data.
 
@@ -37,18 +36,20 @@ First off, let's import the data.
 df_raw <- read_csv("PathologicalFracturesDataSet.csv")
 ```
 
-Before we start to model, it's always important to get a sense of the data. The first thing I noticed is that this is quite a large dataset. It looks like there are `r nrow(df_raw)` rows, one for each patient, and `r length(names(df_raw))` variables. 
+Before we start to model, it's always important to get a sense of the data. The first thing I noticed is that this is quite a large data set. There are `r nrow(df_raw)` rows, one for each patient, and `r length(names(df_raw))` variables. 
 
-That's quite a bit of variables, let's take a closer look:
+That's a lot of information; let's take a look at the first five records:
 
 ```{r}
 df_raw %>% 
-  select(1:7, Calcium, 8:12) %>%
+  dplyr::select(1:7, Calcium, 8:12) %>%
   slice(1:5) %>% 
   glimpse
 ```
 
-Three of the variables are straight-forward: `visitID`, `age`, and `gender`. There are four tests in the data: `xrayTestService`, `petScanService`, `ctTestService`, `Calcium`, which are all continuous variables. The remaining variables are binary variables. There are 70 conditions in the dataset, each with their own code, such as `C1882062`, which is "Neoplastic Syndrome". Each of these conditions have 5 permutations: `currently has`, `Historic`, `Negated`, `uncertian`, and `Surgical`.
+Three of the variables are straight-forward: `visitID`, `age`, and `gender`. There are four tests in the data: `xrayTestService`, `petScanService`, `ctTestService`, and `Calcium`. All tests are continuous variables, except for calcium, which seems to be a factor. Fractures deal with bones. I've been told that the calcium in milk builds strong bones my entire life. Perhaps this is an important variable.
+
+The remaining variables are binary variables. There are 70 conditions in the data set, each with their own code, such as `C1882062` show above, which is "Neoplastic Syndrome." Each of these conditions have 5 permutations: `Currently_Has` (unlabeled), `Historic`, `Negated`, `Uncertian`, and `Surgical`.
 
 ```{r, eval=FALSE, include=FALSE}
 # looks like 
@@ -59,7 +60,7 @@ Three of the variables are straight-forward: `visitID`, `age`, and `gender`. The
 #   summarise(idonteven = sum(yes_check) / sum(n()))
 ```
 
-## Checking the data
+# Checking the Data
 
 ### Null values
 
@@ -67,7 +68,7 @@ Three of the variables are straight-forward: `visitID`, `age`, and `gender`. The
 row_count_no_na <- nrow(drop_na(df_raw))
 ```
 
-The existance of NA values in a dataset is the quickest way to cause confusion and break models, so it's usually the first thing I check for. There are `r nrow(df_raw) - row_count_no_na` rows with NA values. That's very few relative to our total number of records, luckily it seems we have a pretty clean dataset.
+The existence of NA values in a data set is the quickest way to cause confusion and break models, so it's usually the first thing I check for. There are `r nrow(df_raw) - row_count_no_na` rows with NA values. That's very few relative to our total number of records, so it seems we have a pretty clean data set.
 
 Now let's quickly see which variables have null records with this loop:
 ```{r}
@@ -75,9 +76,11 @@ df_raw %>%
   map_lgl(anyNA) %>% # loop all columns with an anyNA check
   .[. == TRUE]
 ```
-Looks like just age and Calcium have NAs, which are both are continuous variables. There are a number of ways to deal with variables, but let's take a closer look at them first.
+Looks like just age and Calcium have NAs. There are a number of ways to deal with variables, but it is important to understand the information before we pick an approach.
 
-First, let's take a look the age distribution before we simply take the median.
+#### Age
+
+First, let's take a look the age distribution median.
 ```{r}
 df_raw %>% 
   ggplot(aes(age)) +
@@ -96,29 +99,30 @@ df_raw %>%
          percent = scales::percent(percent))
 ```
 
-About 10% of patients have the age of exactly 85. I don't know what to do about this yet, because even though it's clearly an outlier spike, it looks like it might be a normal distribution if it continued above. If that's the case, I don't think I should overwrite that info. We can come back to this later.
+This spike caught my eye. About 10% of patients have the age of exactly 85. I decided not to do anything about the 85 year old patient because it looks like the spike would match the normal distribution if it continued above. I'll replace the NAs with the median.
 
-I looked at the calcuim variable and didn't find have anything particularly interesting.
+#### Calcium
 
-
-
-```{r, eval=FALSE, include=FALSE}
-# df_raw %>% 
-#   ggplot(aes(Calcium, fill = result)) +
-#     geom_histogram(binwidth = 1) +
-#     labs(title = 'Calcium') +
-#     theme_ipsum()
+```{r, echo=TRUE}
+df_raw %>%
+  count(Calcium) %>% 
+    mutate(percent = n / sum(n),
+           percent = scales::percent(percent))
 ```
 
-Since the population is low, I'll keep this simple. I'll replace any NAs with the median value of the variable.
+It looks like the distribution between the calcium amounts is even.
+
+#### Fill NAs
 
 ```{r}
 median_age <- median(df_raw$age, na.rm = TRUE)
-median_calcium <- median(df_raw$Calcium, na.rm = TRUE)
 
 df <- df_raw %>%
-  replace_na(list(age = median_age, Calcium = median_calcium))
+  replace_na(list(age = median_age)) %>% 
+  fill(Calcium) # take preceding value to fill it in
 ```
+
+### Check binary variables
 
 ```{r, eval=FALSE, include=FALSE}
 # duplicate visitID check. no dups
@@ -135,7 +139,7 @@ df %>%
   filter(n > 1)
 ```
 
-What numbers are in the variables? Are they all zeroes and ones? I'm removing the fields I can already tell are not zeroes and ones. 
+The remaining ~350 variables seem to be binary, but I checked to make sure that this is true. I check here. 
 
 ```{r}
 # Just removed gender from binary variables
@@ -159,6 +163,8 @@ max_cols %>%
 
 As expected, most of the variables are binary. However, it is surprising to see that gender has some values that are equal to 2. 
 
+#### Gender
+
 ```{r}
 df %>% 
   count(gender) %>% 
@@ -167,14 +173,13 @@ df %>%
   arrange(gender)
 ```
 
-Taking a closer look, it seems that there are only 22 instances where `gender = 2`. Since the amount is so low, I'll remove them from the dataset.
+Taking a closer look, it seems that there are only 22 instances where `gender = 2`. Since the amount is so low, I'll remove them from the data set.
 
-```{r, include=FALSE}
+```{r, echo=TRUE}
 df <- filter(df, gender != 2)
 ```
 
-
-
+### Exploration
 
 ```{r, include=FALSE}
 suffixes <- c('Historic', 'Negated', 'Uncertain', 'Surgical')
@@ -247,7 +252,7 @@ df %>%
 
 ```
 
-Now that a lot of the general data cleaning has been performed, it's time to ask some basic questions. For instance, how many `result = yes` cases are there in the dataset? 
+Now that a lot of the general data cleaning has been performed, it's time to ask some basic questions. For instance, how many `result = yes` cases are there in the data set? 
 
 ```{r}
 df %>% 
@@ -268,9 +273,9 @@ df %<>%
   dplyr::select(-visitId)
 ```
 
-# Modeling
+# Training Data Setup
 
-The first step in a predictive model is to separate the data between what is going to be trained and what is going to be tested. It's important to do this randomly to avoid accidentally biasing the data. Furthermore, it is important to maintain a balance of your outcome variable between the train and test datasets. I do that here using the famous `caret` package. I first decided to slit the data set into .1 train .9 test, due to the size of the dataset and number of values.
+The first step in a predictive model is to separate the data between what is going to be trained and what is going to be tested. It's important to do this randomly to avoid accidentally biasing the data. Furthermore, it is important to maintain a balance of your outcome variable between the train and test data sets. I do that here using the famous `caret` package. I first decided to slit the data set into .1 train .9 test, due to the size of the data set and number of values.
 
 ```{r}
 train_test <- function(df, partition) {
@@ -292,8 +297,7 @@ test_base_1 <- train_test$test
 
 ```
 
-
-There are a lot of variables and many of them only have one factor level. I'll be slicing the data a few times, so I'll create a function to remove these unhelpful variables from the training set. When I first ran this analysis I was most interested in the binary variables, since it was easier to check the non-binary variables on my own.
+There are a lot of variables and many of them only have one factor level. I'll be slicing the data a few times, so I'll create a function to remove these unhelpful variables from the training set. When I first ran this analysis I was most interested in the binary variables.
 
 ```{r}
 remove_unhelpful_factors <- function(df) {
@@ -319,7 +323,7 @@ remove_unhelpful_factors <- function(df) {
 }
 ```
 
-I'm also evaluating the model in the same way, so I'll make a function for that too.
+Since I'm most interested in finding true positives, I made this function to quickly check my models.
 ```{r}
 # small function to evaluate the model
 evaluate_model <- function(test, prediction) {
@@ -337,17 +341,16 @@ evaluate_model <- function(test, prediction) {
 
 # Modeling
 
-## Model 1 Naive Bayes *the kitchen sink*
+## Model 1: Naive Bayes *the kitchen sink*
 
-A lot of my preliminary data exploration was somewhat dissapointing. Outside of what is shown in this report, I explored a number of the variables looking for a relationship with `result = yes`, but nothing stood out. As such, I decided to try a model with all of the binary variables to see what would happen. I used naive bayes as it is generally a dependable and easy to use model.
+A lot of my preliminary data exploration were somewhat disappointing. Outside of what is shown in this report, I explored a number of the variables looking for a relationship with `result = yes`, but nothing stood out. As such, I decided to try a model with all of the binary variables to see what would happen. I used Naive Bayes as it is generally a performant and easy to use model.
 
 ```{r, message=FALSE, warning=FALSE}
 train <- remove_unhelpful_factors(train_base_1)
 test <- test_base_1
 
-library(klaR)
 set.seed(1991)
-model_nb_1 <- NaiveBayes(result~., data=train)
+model_nb_1 <- klaR::NaiveBayes(result~., data=train)
 
 summary(model_nb_1)
 # print(model_nb_1)
@@ -357,7 +360,7 @@ evaluate_model(test, prediction_nb_1)
 
 ```
 
-Despite only running on 10% of the data. This model took about a half-hour to run. 44.7% of true results were predicted. For a first pass, I was suprised by how accurate the model was.
+Despite only running on 10% of the data. This model took about a half-hour to run. 44.7% of true results were predicted. For a first pass, I was surprised by how accurate the model was.
 
 After running this model, I tried a number of other approaches:
 
@@ -366,11 +369,11 @@ After running this model, I tried a number of other approaches:
 - I combined the condition variables in a number of ways (28.3%, 26% accuracy)
 - I tried a random forest (0% accurate)
 
-I ran the random forest when I left Madison to go to my college reunion in Appleton. The model ran for the entire two hour drive in my passenger seat. When the model clearly didn't work, I decided to try a new approach. Feature seletion and model experimentation were getting me nowhere.
+I ran the random forest when I left Madison to go to my college reunion in Appleton. The model ran for the entire two hour drive in my passenger seat. When the model clearly didn't work, I decided to try a new approach. Feature selection and model experimentation were getting me nowhere.
 
-## The break through
+## Model 2: The Break Through
 
-The presence of a pathological fracture is a rare event in this dataset. I figured that the disproportionate number of negatives must be bloating or confusing the model. I researched unbalanced datasets and found a number of different ways to apprach this problem. The most straight-forward was undersampling. Undersampling is when you randomly remove data from your training set to even the number of positive and negative cases.
+The presence of a pathological fracture is a rare event in this data set. I figured that the disproportionate number of negatives must be bloating or confusing the model. I researched unbalanced data sets and found a number of different ways to approach this problem. The most straight-forward was under-sampling. Under-sampling is when you randomly remove data from your training set to even the number of positive and negative cases.
 
 I created a function to quickly balance my training set:
 
@@ -397,16 +400,20 @@ train <- balance_df(train_base_5)
 train <- remove_unhelpful_factors(train)
 
 set.seed(1991)
-model <- NaiveBayes(result~., data=train)
+model <- klaR::NaiveBayes(result~., data=train)
 
 prediction_nb_2 <- predict(model, test_base_5)
 
 evaluate_model(train_test$test, prediction)
 ```
 
-The under sampling method worked quite well. The model predicts true-positives 70.1% of the time, and has false negatives 11.6% of the time. This model took several minutes to run, so I decided to try running a logit model to see a different approach would help with performance and accuracy.
+The under sampling method worked quite well. The model predicts true-positives 70.1% of the time, and has false negatives 11.6% of the time. This model meets the requirements of the model.
 
-The logit model is a bit more sensitive than naive bayes and has some different outputs so the code is a bit different.
+## Model 3: Logit Experimentation
+
+Yes, previous model met the requirements, but Naive Bayes can be a bit of a black box. A logit model is a bit easier to interperet, and, in this case, has significantly better performance. 
+
+A logit model is a bit more sensitive to the input data than Naive Bayes and has some different outputs so the code to run and interpret differs a bit from Naive Bayes.
 
 ```{r, message=FALSE, warning=FALSE}
 valid_cols <- train %>% 
@@ -439,16 +446,26 @@ test_base_5 %>%
 
 ```
 
-Here we see the true positive performance is slightly improved, whereas the false negatives have also increased. Relative to naive bayes, logit is nice since it gives probabilities instead of raw outputs. Using a ROC curve, we can see how setting the probability threshold will impact our type 1 and type 2 errors.
+Here we see the true positive performance is slightly improved, whereas the false negatives have also increased. Relative to Naive Bayes, logit is nice since it gives probabilities instead of raw outputs. Using a ROC curve, we can see how setting the probability threshold will impact our type 1 and type 2 errors. Not knowing the preference of type 1 and type 2 errors, I decided to keep the threshold at `.5`.
 
-```{r, include=FALSE}
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
 library(plotROC)
 test_base_5 %>%
   mutate(result = if_else(result == 'no', 0, 1)) %>% 
   ggplot(aes(d = result, m = prediction)) +
     geom_roc()
 ```
+# Conclusion and next steps: 
 
+Builing this model was a great learning experience. New datasets always produce new chalenges. I was surprised that manipulating the training set -- rather than focusing on feature selection -- ended up being the most effective way of improving accuracy. 
+
+While this model meets the specified requirements, there are a number of approaches I did not have time to investigate:
+
+- Using the letter of the visitID as its own variable.
+- Getting to know the conditions better. 
+- Over sampling
+- Cross fold validation
+- Create easy, dynamic functions for easier feature selection
 
 
 
