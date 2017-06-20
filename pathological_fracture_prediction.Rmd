@@ -1,87 +1,154 @@
 ---
 title: "Pathological Fracture Prediction"
+author: Andrew Kraemer
+date: 2017-06-20
 output: html_notebook
 ---
 
-pathological_fracture_prediction
+# Introduction
 
-```{r packages}
-library(caret)
+I was asked to build a predictive model for pathological fractures. I ran a number of models before getting above 50% accuracy. The key to getting predictions greater than 66% accuracy was under-sampling the training data. In addition to increasing model accuracy, under-sampling also significantly reduced the time it took to train my models. There are a number of approaches, models, and variable manipulations that I did not try here that can be used in future analyses.
+
+The following is a step-by-step walk through of how I approached, cleaned, prepared, and modeled the data. What is shown is a subset of my code. The full analysis can be found on my [github page](https://github.com/kidman007/pathological_fracture_prediction/blob/full_analysis/pathological_fracture_prediction.Rmd). 
+
+
+```{r packages, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 library(tidyverse)
-library(dplyr)
 library(magrittr)
 library(stringr)
-# devtools::install_github('kidman007/kraemR')
-library(kraemR)
+# devtools::install_github('hrbrmstr/hrbrthemes')
 library(hrbrthemes)
 ```
 
-Download file from: [https://drive.google.com/open?id=0B4W_zSMkDcS9SlRrTXZlLVBGU3M](https://drive.google.com/open?id=0B4W_zSMkDcS9SlRrTXZlLVBGU3M) and save in your working directory.
+# Data First Look
 
-```{r data_import}
+First off, let's import the data.
+
+```{r data_pull, eval=FALSE, include=FALSE}
 # I'll figure this out later if I have time
 # if (!file.exists("PathologicalFracturesDataSet.csv")) {
-  id <- "0B4W_zSMkDcS9SlRrTXZlLVBGU3M" # google file ID
-  read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download", id))
+  # id <- "0B4W_zSMkDcS9SlRrTXZlLVBGU3M" # google file ID
+  # read_csv(sprintf("https://docs.google.com/uc?id=%s&export=download", id))
 # }
+```
 
+```{r data_import, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 df_raw <- read_csv("PathologicalFracturesDataSet.csv")
-
 ```
+
+Before we start to model, it's always important to get a sense of the data. The first thing I noticed is that this is quite a large data set. There are `r nrow(df_raw)` rows, one for each patient, and `r length(names(df_raw))` variables. 
+
+That's a lot of information; let's take a look at the first five records:
 
 ```{r}
-head(df_raw) %>% 
-  View
+df_raw %>% 
+  dplyr::select(1:7, Calcium, 8:12) %>%
+  slice(1:5) %>% 
+  glimpse
 ```
 
+Three of the variables are straight-forward: `visitID`, `age`, and `gender`. There are four tests in the data: `xrayTestService`, `petScanService`, `ctTestService`, and `Calcium`. All tests are continuous variables, except for calcium, which seems to be a factor. Fractures deal with bones. I've been told that the calcium in milk builds strong bones my entire life. Perhaps this is an important variable.
 
-```{r}
-glimpse(df_raw)
+The remaining variables are binary variables. There are 70 conditions in the data set, each with their own code, such as `C1882062` show above, which is "Neoplastic Syndrome." Each of these conditions have 5 permutations: `Currently_Has` (unlabeled), `Historic`, `Negated`, `Uncertian`, and `Surgical`.
+
+```{r, eval=FALSE, include=FALSE}
+# looks like 
+# df_raw %>% 
+#   mutate(bort = str_sub(visitId,-1,-1),
+#          yes_check = if_else(result == 'yes', 1, 0)) %>% 
+#   group_by(bort) %>% 
+#   summarise(idonteven = sum(yes_check) / sum(n()))
 ```
+
+# Checking the Data
+
+### Null values
 
 ```{r, include=FALSE}
 row_count_no_na <- nrow(drop_na(df_raw))
 ```
 
-There are `r nrow(df_raw) - row_count_no_na` rows with na values.
+The existence of NA values in a data set is the quickest way to cause confusion and break models, so it's usually the first thing I check for. There are `r nrow(df_raw) - row_count_no_na` rows with NA values. That's very few relative to our total number of records, so it seems we have a pretty clean data set.
 
-Which columns have NAs?
+Now let's quickly see which variables have null records with this loop:
 ```{r}
 df_raw %>% 
   map_lgl(anyNA) %>% # loop all columns with an anyNA check
   .[. == TRUE]
 ```
-Looks like just age and Calcium.
+Looks like just age and Calcium have NAs. There are a number of ways to deal with variables, but it is important to understand the information before we pick an approach.
 
-```{r}
-paste(nrow(df_raw[is.na(df_raw$age), ]), 'age records are NA')
-paste(nrow(df_raw[is.na(df_raw$Calcium), ]), 'Calcium records are NA')
-```
+#### Age
 
-Are there any duplicate visit IDs?
-
+First, let's take a look the age distribution median.
 ```{r}
 df_raw %>% 
-  count(visitId) %>% 
-  filter(n > 1) %>% 
-  nrow %>% 
-  paste(., 'duplicate visitIDs')
+  ggplot(aes(age)) +
+    geom_histogram(binwidth = 1) +
+    labs(title = '85 Year Old Spike') +
+    theme_ipsum()
 ```
 
+```{r, eval=FALSE, include=FALSE}
+max_age <- max(df_raw$age, na.rm = TRUE)
 
-What numbers are in the variables? Are they all zeroes and ones? I'm removing the fields I can already tell are not zeroes and ones. 
+df_raw %>% 
+  mutate(is_max_age = if_else(age == max_age, 'y','n')) %>% 
+  count(is_max_age) %>%
+  mutate(percent = n / sum(n),
+         percent = scales::percent(percent))
+```
+
+This spike caught my eye. About 10% of patients have the age of exactly 85. I decided not to do anything about the 85 year old patient because it looks like the spike would match the normal distribution if it continued above. I'll replace the NAs with the median.
+
+#### Calcium
+
+```{r, echo=TRUE}
+df_raw %>%
+  count(Calcium) %>% 
+    mutate(percent = n / sum(n),
+           percent = scales::percent(percent))
+```
+
+It looks like the distribution between the calcium amounts is even.
+
+#### Fill NAs
 
 ```{r}
-non_binary_vars <- c('visitId','gender', 'age', 'result', 'xrayTestService', 'petScanService', 'ctTestService', 'Calcium')
+median_age <- median(df_raw$age, na.rm = TRUE)
 
-max_cols <- df_raw %>% 
-  select(-visitId,
-         -age,
-         -result,
-         -xrayTestService,
-         -petScanService,
-         -ctTestService,
-         -Calcium) %>% 
+df <- df_raw %>%
+  replace_na(list(age = median_age)) %>% 
+  fill(Calcium) # take preceding value to fill it in
+```
+
+### Check binary variables
+
+```{r, eval=FALSE, include=FALSE}
+# duplicate visitID check. no dups
+df %>% 
+  count(visitId) %>% 
+  filter(n > 1) %>% 
+  nrow
+
+# I checked the visit ID. I found that dup ids with different end letters seem to be different people. Like, they have different genders
+df %>%
+  transmute(visitId = str_sub(visitId, 1, -2)) %>%
+  count(visitId) %>%
+  arrange(desc(visitId)) %>%
+  filter(n > 1)
+```
+
+The remaining ~350 variables seem to be binary, but I checked to make sure that this is true. I check here. 
+
+```{r}
+# Just removed gender from binary variables
+non_binary_vars <- c('visitId', 'age', 'result', 'xrayTestService', 'petScanService', 'ctTestService', 'Calcium')
+
+binary_vars <- names(df)[!(names(df) %in% non_binary_vars)]
+
+max_cols <- df %>% 
+  select(-one_of(non_binary_vars), gender) %>% 
   summarise_all(max) %>% 
   t %>%
   as.data.frame %>% 
@@ -89,54 +156,32 @@ max_cols <- df_raw %>%
   rename(max_value = V1)
 
 max_cols %>% 
-  arrange(desc(max_value))
-
-binary_vars <- max_cols %>% 
-  filter(max_value %in% c(0,1)) %>% 
-  pull(rowname)
-
+  arrange(desc(max_value)) %>% 
+  filter(max_value > 1)
 ```
 
-As I expected, most of the variables are binary. It's probably worth noting that over 50 of the binary variables have no records that are a `1`. 
 
-I created the variables `binary_vars` and `non_binary_vars` for later reference
+As expected, most of the variables are binary. However, it is surprising to see that gender has some values that are equal to 2. 
 
-Okay, interesting, apparantly there's a two in gender. Let's find out how many of those there are.
+#### Gender
 
 ```{r}
-df_raw %>% 
-  count_pct(gender) %>% 
-  select(-pct) %>% 
+df %>% 
+  count(gender) %>% 
+  mutate(percent = n / sum(n),
+         percent = scales::percent(percent)) %>% 
   arrange(gender)
 ```
-Okay, it looks like there are only 22 cases of `gender = 2`. I'm not sure what I want to do with that.
 
-Can there numbers in multiple columns? So I start with the first variable set: `C1882062`, which is apparantly "Neoplastic Syndrome."
+Taking a closer look, it seems that there are only 22 instances where `gender = 2`. Since the amount is so low, I'll remove them from the data set.
 
-```{r}
-df_raw %>% 
-  select(starts_with('C1882062')) %>%
-  mutate(var_sum = C1882062 + C1882062Historic + C1882062Negated + C1882062Uncertain + C1882062Surgical) %>% 
-  # filter(var_sum > 0 ) %>% 
-  arrange(desc(var_sum)) %>% 
-  head
-
-# 
-df_raw %>%
-  select(starts_with('C1882062')) %>%
-  mutate(var_sum = C1882062 + C1882062Historic + C1882062Negated + C1882062Uncertain + C1882062Surgical) %>%
-  filter(
-         # C1882062 == 0,
-         var_sum > 0) %>%
-  arrange(desc(var_sum)) %>%
-  count_pct(C1882062)
-
+```{r, echo=TRUE}
+df <- filter(df, gender != 2)
 ```
 
-Okay, this is interesting there are no examples for `C1882062` that have all 5. Let me check this across all of the non-binary variables.
+### Exploration
 
-```{r}
-
+```{r, include=FALSE}
 suffixes <- c('Historic', 'Negated', 'Uncertain', 'Surgical')
 
 length(binary_vars) / 5 # looks like there are the correct number of columns
@@ -163,220 +208,102 @@ map_dbl(binary_vars_unique, var_max_answer_check) %>%
   count(value) %>% 
   mutate(pct = round(n/ sum(n),4))
 
-map_dbl(binary_vars_unique, var_max_answer_check, df = filter(df_raw, result == 'yes')) %>% 
-  as_tibble() %>% 
-  count(value) %>% 
-  mutate(pct = round(n/ sum(n),4))
-```
-
-Still trying to understand these variables. They can have 5 that are coded 1, or they can have things that are coded without the "vanilla" version of the variable being coded.
-
-
-
-## Cleaning data
-Dealing with NAs
-
-First, let's take a look the age distribution before we simply take the median.
-```{r}
-df_raw %>% 
-  ggplot(aes(age)) +
-    geom_histogram(binwidth = 1) +
-    labs(title = '85 Year Old Spike') +
-    theme_ipsum()
-```
-
-It looks like there is an incredible amount of older patients. I'm guessing that this is an error.
-
-```{r}
-(max_age <- max(df_raw$age, na.rm = TRUE))
-
-df_raw %>% 
-  mutate(is_max_age = if_else(age == max_age, 'y','n')) %>% 
-  count_pct(is_max_age) %>% 
-  select(-pct)
-```
-
-Odd, around 10% of patients have the age of exactly 85. I don't know what to do about this yet, because even though it's clearly a spike, it looks like it might be a normal distribution if it continued above. If that's the case, I don't think I should overwrite that info.
-
-```{r}
-# I don't know what to do about the crazy 85 thing.
+# map_dbl(binary_vars_unique, var_max_answer_check, df = filter(df_raw, result == 'yes')) %>% 
+#   as_tibble() %>% 
+#   count(value) %>% 
+#   mutate(pct = round(n/ sum(n),4))
 ```
 
 
-Let's look at all of the other continuous variables:
-```{r}
-non_binary_vars
-
-df_raw %>% 
+```{r, eval=FALSE, include=FALSE}
+df %>% 
   ggplot(aes(result, age)) +
     geom_boxplot() +
     labs(title = 'age') +
     theme_ipsum()
 
-df_raw %>% 
+df %>% 
   ggplot(aes(result, xrayTestService)) +
     geom_boxplot() +
     labs(title = 'xrayTestService') +
     theme_ipsum()
+df %>% 
+  count(xrayTestService)
 
-df_raw %>% 
+df %>% 
   ggplot(aes(result, petScanService)) +
     geom_boxplot() +
     labs(title = 'petScanService') +
     theme_ipsum()
 
-df_raw %>% 
+df %>% 
   ggplot(aes(result, ctTestService)) +
     geom_boxplot() +
     labs(title = 'ctTestService') +
     theme_ipsum()
 
-df_raw %>% 
-  ggplot(aes(result, Calcium)) +
-    geom_boxplot() +
-    labs(title = 'Calcium') +
-    theme_ipsum()
+df %>% 
+  filter(result == 'yes') %>% 
+  count(Calcium, result) %>% 
+  mutate(percent = n / sum(n),
+         percent = scales::percent(percent))
+  
+  
+
 ```
 
-Okay, so how many people actually have the issue?
+Now that a lot of the general data cleaning has been performed, it's time to ask some basic questions. For instance, how many `result = yes` cases are there in the data set? 
 
 ```{r}
-df_raw %>% 
+df %>% 
   ggplot(aes(result)) +
     geom_bar() +
     labs(title = 'result distribution') +
     theme_ipsum()
 ```
 
-Very few, it turns out. `r df_raw %>% count_pct(result) %>% .[2,4] %>% pull` to be specific.
+The chart above shows that a very small subset of the data has positive instances of pathological fractures. `r df %>% count(result) %>% mutate(percent = n / sum(n), percent = scales::percent(percent)) %>% .[2,3] %>% pull` to be specific.
 
+This model will have to find a needle in a haystack.
 
-
-Let's run through my (likely very unhelpful) chisq test across all of the variables.
-
-```{r}
-chisq_pvalues <- df_raw %>%
-  select(one_of(binary_vars)) %>%
-  map(table, factor(df_raw$result)) %>%
-  map(chisq.test) %>%
-  map_dbl("p.value") %>%                   # extract p-value from output
-  broom::tidy() %>%                        # convert from a list to a dataframe
-  mutate(p_value = round(x,4)) %>%
-  select(-x)
-```
-
-
-```{r}
-df_raw %>% 
-  filter(result == 'yes') %>% 
-  group_by(result) %>% 
-  summarise_at(binary_vars, sum) %>% 
-  select(-result) %>% 
-  t %>%
-  as.data.frame %>% 
-  rownames_to_column() %>%
-  rename(positive_count = V1) %>% 
-  arrange(desc(positive_count))
-```
-
-In this section, I try to see if there is a bias towards certain kinds of a permutations. I'm not super happy with this code. 
-
-```{r}
-# 
-# all of this is garbage code
-# 
-
-suffixes_plus <- c('Historic', 'Negated', 'Uncertain', 'Surgical', 'Basic')
-
-# I should really just make a function for this
-flagged_binary_vars <- binary_vars %>% 
-  as_tibble() %>% 
-  mutate(permutation = '',
-         permutation = if_else(str_detect(value, 'Historic'), 'Historic', coalesce(permutation, '')), 
-         permutation = if_else(str_detect(value, 'Negated'), 'Negated', coalesce(permutation, '')),
-         permutation = if_else(str_detect(value, 'Uncertain'), 'Uncertain', coalesce(permutation, '')),
-         permutation = if_else(str_detect(value, 'Surgical'), 'Surgical', coalesce(permutation, '')),
-         permutation = if_else(permutation == '', 'Basic', permutation)
-  )
-
-sum_permutation_type <- function(suf, df = df_raw) {
-  selected_col <- flagged_binary_vars %>% 
-    filter(permutation == suf) %>% 
-    pull(value)
-  df %>% 
-    select(one_of(selected_col)) %>% 
-    rowSums() %>% 
-    sum()
-}
-
-total_permutations <- map_dbl(suffixes_plus, sum_permutation_type) %>% 
-                        tibble(count = .,
-                               permutation = suffixes_plus)
-total_permutations %>% 
-  mutate(pct = round(count / sum(count),4)) %>% 
-  arrange(desc(pct))
-  
-yes_permutations <- map_dbl(suffixes_plus, sum_permutation_type, df = filter(df_raw, result == 'yes')) %>% 
-                      tibble(count = .,
-                             permutation = suffixes_plus) 
-yes_permutations %>% 
-  mutate(pct = round(count / sum(count),4)) %>% 
-  arrange(desc(pct))
-```
-
-It looks like there isn't a signficicant difference between the distributions of permutation field type.
-
-# data cleaning
-
-```{r filling_nas}
-# gender == 2 has no positive outcomes. I'll just remove them from the analysis
-# df_raw %>% 
-#   filter(gender == 2,
-#          result == 'yes') %>% 
-#   nrow
-
-median_age <- median(df_raw$age, na.rm = TRUE)
-median_calcium <- median(df_raw$Calcium, na.rm = TRUE)
-
-df <- df_raw %>%
-  replace_na(list(age = median_age, Calcium = median_calcium)) %>% 
-  filter(gender != 2) %>% 
+```{r, include=FALSE}
+df %<>% 
   mutate_at(binary_vars, as.factor) %>% 
-  mutate_at(c('gender', 'result'), as.factor) %>% 
-  select(-visitId)
-
-
-# train <- data[1:800,]
-# test <- data[801:889,]
-
-# what should the p be? how many times?
-
-
-# library(caret)
-
-
-# df_cv <- df %>% 
-#   select(-Doors, -Chevy, -sedan) %>%
-#   crossv_kfold(10)
+  mutate(result = as.factor(result)) %>% 
+  dplyr::select(-visitId)
 ```
 
-There are a lot of variables. A number of the factored variables only have one factor level. I get rid of them here.
+# Training Data Setup
 
-I'm making a function here to make my life easier. I'd like to be able to quickly change the partition and not worry about automatically removing factors that won't have any impact.
+The first step in a predictive model is to separate the data between what is going to be trained and what is going to be tested. It's important to do this randomly to avoid accidentally biasing the data. Furthermore, it is important to maintain a balance of your outcome variable between the train and test data sets. I do that here using the famous `caret` package. I first decided to slit the data set into .1 train .9 test, due to the size of the data set and number of values.
 
 ```{r}
-train_test_reset <- function(partition, df) {
-
+train_test <- function(df, partition) {
   set.seed(1991)
+  
   trainIndex <- caret::createDataPartition(df$result, p = partition, 
                                            list = FALSE, 
                                            times = 1)
-  
-  train_raw <- df[ trainIndex,]
-  test_raw  <- df[-trainIndex,]
-  
+  train_base <- df[ trainIndex,]
+  test_base  <- df[-trainIndex,]
+
+  output <- list(train = train_base, test = test_base)
+  return(output)
+}
+
+train_test <- train_test(df, .1)
+train_base_1 <- train_test$train
+test_base_1 <- train_test$test
+
+```
+
+There are a lot of variables and many of them only have one factor level. I'll be slicing the data a few times, so I'll create a function to remove these unhelpful variables from the training set. When I first ran this analysis I was most interested in the binary variables.
+
+```{r}
+remove_unhelpful_factors <- function(df) {
+
   # variables with more than one 
-  usable_factors <- train_raw %>% 
+  usable_factors <- df %>% 
     select_if(is.factor) %>% 
     map_dbl(~length(levels(.))) %>% 
     enframe() %>% 
@@ -387,24 +314,16 @@ train_test_reset <- function(partition, df) {
   not_factor <- function(x) {!is.factor(x)}
   
   # bringing it all together
-  model_variables <- train_raw %>% 
+  model_variables <- df %>% 
     select_if(not_factor) %>% 
     names %>% 
     c(.,usable_factors)
   
-  # non_bin <- df %>%
-  #   dplyr::select(one_of(non_binary_vars))
-  
-  train <- train_raw %>%
-    dplyr::select(one_of(usable_factors)) #%>% 
-    # bind_cols(non_bin)
-    
-  output <- list(train = train, test = test_raw)
-  return(output)
+  return(dplyr::select(df, one_of(usable_factors)))
 }
 ```
 
-I'm also evaluating the model in the same way, so I'll make a function for that too.
+Since I'm most interested in finding true positives, I made this function to quickly check my models.
 ```{r}
 # small function to evaluate the model
 evaluate_model <- function(test, prediction) {
@@ -412,26 +331,26 @@ evaluate_model <- function(test, prediction) {
   
   test %>% 
     mutate(check = (result == prediction)) %>% 
-    filter(result == 'yes') %>% 
-    count_pct(check)
+    group_by(result) %>% 
+    count(check) %>% 
+    mutate(percent = n / sum(n),
+           percent = scales::percent(percent))
 }
 ```
 
 
 # Modeling
 
-## First approach is a basic Naive Bayes model
-```{r}
-# train a naive bayes model
-# model <- train(result~., data=train, method="nb")
+## Model 1: Naive Bayes *the kitchen sink*
 
-train_test <- train_test_reset(.1, df)
-train <- train_test$train
-test <- train_test$test
+A lot of my preliminary data exploration were somewhat disappointing. Outside of what is shown in this report, I explored a number of the variables looking for a relationship with `result = yes`, but nothing stood out. As such, I decided to try a model with all of the binary variables to see what would happen. I used Naive Bayes as it is generally a performant and easy to use model.
 
-library(klaR)
+```{r, message=FALSE, warning=FALSE}
+train <- remove_unhelpful_factors(train_base_1)
+test <- test_base_1
+
 set.seed(1991)
-model_nb_1 <- NaiveBayes(result~., data=train)
+model_nb_1 <- klaR::NaiveBayes(result~., data=train)
 
 summary(model_nb_1)
 # print(model_nb_1)
@@ -439,263 +358,24 @@ prediction_nb_1 <- predict(model_nb_1, test)
 
 evaluate_model(test, prediction_nb_1)
 
-# first run got 44.7%
-
-# # make predictions
-# x_test <- data_test[,1:4]
-# y_test <- data_test[,5]
-# predictions <- predict(model, x_test)
-# # summarize results
-# confusionMatrix(predictions$class, y_test)
 ```
 
-## Second approach NB "Best Variables"
+Despite only running on 10% of the data. This model took about a half-hour to run. 44.7% of true results were predicted. For a first pass, I was surprised by how accurate the model was.
 
-So, that first model could have been better. Let's take a closer look at the variables. Here, I've grabbed the variables 10 variables that have the highest percentage of being a 1 for yes. I'm pretty sure this is a bad way to do things.
+After running this model, I tried a number of other approaches:
 
-```{r}
-# using the model output from the last model I get a bunch of outputs. I organize them here
-(top_by_table <- model_nb_1$tables %>% 
-  map_dbl(~.[2,2]) %>% 
-  enframe() %>% 
-  arrange(desc(value)))
+- I only kept the features which correlated most strongly to yes and no (21.1% accuracy)
+- I ran a model that only kept conditions that were current (25.3% accuracy)
+- I combined the condition variables in a number of ways (28.3%, 26% accuracy)
+- I tried a random forest (0% accurate)
 
-features_nb_2 <- top_by_table %>% 
-  filter(name %in% c('gender', binary_vars_unique)) %>% 
-  slice(1:10) %>% 
-  pull(name)
+I ran the random forest when I left Madison to go to my college reunion in Appleton. The model ran for the entire two hour drive in my passenger seat. When the model clearly didn't work, I decided to try a new approach. Feature selection and model experimentation were getting me nowhere.
 
-# When I was tired, I tried to compare conditions and see their relative permutations. I was getting odd results
-# df %>% 
-#   filter(result == 'yes') %>% 
-#   mutate_if(is.factor, as.numeric) %>% 
-#   mutate(chk = if_else((C0416980 + C0416980Historic) == 2,1,0),
-#          or_chk = if_else((C0416980  + C0416980Historic) %in% c(1,2) ,1,0)) %>%
-#   summarise_at(c('C0416980', 'C0416980Historic', 'chk', 'or_chk'), sum)
+## Model 2: The Break Through
 
-```
+The presence of a pathological fracture is a rare event in this data set. I figured that the disproportionate number of negatives must be bloating or confusing the model. I researched unbalanced data sets and found a number of different ways to approach this problem. The most straight-forward was under-sampling. Under-sampling is when you randomly remove data from your training set to even the number of positive and negative cases.
 
-
-```{r}
-
-train_test <- train_test_reset(.1)
-
-train <- train_test$train %>% 
-  dplyr::select(one_of('result',features_nb_2))
-
-test <- train_test$test
-  
-set.seed(1991)  
-model_nb_2 <- NaiveBayes(result~., data=train)
-prediction_nb_2 <- predict(model_nb_2, test)
-
-evaluate_model(test, prediction_nb_1)
-# this run got 21.1%
-
-```
-
-Woah, that model was way worse. It only got 21.1% accuracy.
-
-## Third Approach: NB Combine variables
-
-```{r}
-factor_to_numeric <- function(x) as.numeric(as.character(x))
-
-# create list of dfs for each condition
-row_summed_condtions <- 
-  map(binary_vars_unique, 
-        ~df_unfactored_binary[, str_detect(., colnames(df_unfactored_binary))]
-      ) %>%
-  map(~rowSums(.))
-
-names(row_summed_condtions) <- str_c(binary_vars_unique,"_combined") # name lists for conversion into df
-  
-df_combined <- row_summed_condtions %>% 
-  as_tibble() %>% 
-  map(~if_else(. > 0, 1, 0)) %>% 
-  map(as.factor) %>%
-  bind_cols(df[c('age', 'gender', 'result', 'Calcium','xrayTestService','petScanService','ctTestService')])
-
-```
-
-```{r}
-train_test <- train_test_reset(.1, df_combined)
-
-train <- train_test$train
-test <- train_test$test
-
-set.seed(1991)
-model_nb_3 <- NaiveBayes(result~., data=train)
-prediction_nb_3 <- predict(model_nb_3, test)
-
-evaluate_model(test, prediction_nb_3)
-# 25.3%
-```
-
-
-
-## Fourth Approach: kitchen sink random forest
-
-It's clear that shooting into the dark hasn't been particularly productive. I'll try a random forest to identify what the most important variables are. With those variables, maybe I can come up with a better prediction.
-
-```{r}
-library(randomForest)
-
-train_test <- train_test_reset(.5, df)
-
-train <- train_test$train
-test <- train_test$test
-
-set.seed(1991)
-model_rf_4 <- randomForest(result~., data = train)
-
-prediction_rf_4 <- predict(model_rf_4, test)
-
-prediction_rf_4 %>% 
-  as_tibble() %>% 
-  rename(prediction = value) %>% 
-  bind_cols(., test) %>% 
-  mutate(check = (result == prediction)) %>% 
-  filter(result == 'yes') %>% 
-  count_pct(check)
-
-```
-Zero results when run with .1???? That seems just wrong
-Zero results when run with .5???? That's just rude.
-
-```{r}
-# Get importance
-importance    <- importance(rf_model)
-varImportance <- data.frame(Variables = row.names(importance), 
-                            Importance = round(importance[ ,'MeanDecreaseGini'],2))
-
-# Create a rank variable based on importance
-rankImportance <- varImportance %>%
-  mutate(Rank = paste0('#',dense_rank(desc(Importance))))
-
-# Use ggplot2 to visualize the relative importance of variables
-ggplot(rankImportance, aes(x = reorder(Variables, Importance), 
-    y = Importance, fill = Importance)) +
-  geom_bar(stat='identity') + 
-  geom_text(aes(x = Variables, y = 0.5, label = Rank),
-    hjust=0, vjust=0.55, size = 4, colour = 'red') +
-  labs(x = 'Variables') +
-  coord_flip() + 
-  theme_few()
-```
-
-## fifth Approach: do more weirds stuff to the data
-
-Here I identify rid of all variables that are 'unpopular' in the result = yes subset of the DF. I have one list that is all but 0 and one that is less than 6.
-```{r}
-df_yes <- df %>% 
-  filter(result == 'yes')
-
-
-var_popularity <- function(df, var_id) {
-  df %>% 
-    select(one_of(var_id)) %>%
-    mutate_all(factor_to_numeric) %>% 
-    summarise_all(sum) %>% 
-    t %>%
-    as.data.frame %>% 
-    rownames_to_column() %>% 
-    rename(total_value = V1) %>%
-    arrange(desc(total_value)) %>% 
-    filter(total_value != 0)
-}
-
-binary_vars_pos_df <- var_popularity(df_yes, binary_vars)
-
-binary_vars_pos_df %>% 
-  ggplot(aes(total_value)) + 
-    geom_histogram()
-
-binary_vars_pos_df_6 <- binary_vars_pos %>% 
-  filter(total_value > 5)
-
-binary_vars_pos <- pull(binary_vars_pos_df, rowname)
-binary_vars_pos_6 <- pull(binary_vars_pos_df_6, rowname)
-
-```
-
-Here I combine current and historic.
-
-```{r}
-unique_df <- df %>% 
-  select(one_of(binary_vars_unique))
-
-historical_df <- df %>% 
-  select(ends_with("Historic"))
-
-has_had_df <- bind_cols(unique_df, historical_df) %>%
-  mutate_all(factor_to_numeric)
-
-combine_historical <- function(condtion_code) {
-  has_had_df %>%   
-    select(contains(condtion_code)) %>% 
-    rowSums(.) %>% 
-    as_tibble() %>% 
-    transmute(value = if_else(value == 0, 0, 1 )) %>% 
-    pull
-}
-
-has_had_df <- map(binary_vars_unique, combine_historical)
-names(has_had_df) <- binary_vars_unique
-
-has_had_df <- as_tibble(bort) %>% 
-  mutate_all(as.factor)
-names(has_had_df) <- str_c(binary_vars_unique,'_has_had')
-
-has_had_df <- df %>% 
-  select(-contains('Historic'),
-         -one_of(binary_vars_unique)) %>% 
-  bind_cols(., has_had_df)
-```
-
-Now I prepare the data to only keep the above 5 variables
-
-```{r}
-binary_vars_has_had <- c(binary_vars[!(binary_vars %in% binary_vars_unique)], str_c(binary_vars_unique,'_has_had'))
-binary_vars_has_had <- binary_vars_has_had[!str_detect(binary_vars_has_had,'Historic')]
-
-binary_vars_pos_has_had <- has_had_df %>% 
-  filter(result == 'yes') %>% 
-  var_popularity(., binary_vars_has_had)
-
-binary_vars_pos_df_6_has_had <- binary_vars_pos_has_had %>% 
-  filter(total_value > 5)
-
-binary_vars_pos_6_has_had <- pull(binary_vars_pos_df_6_has_had, rowname)
-
-
-```
-
-
-
-```{r}
-has_had_df_popular <- has_had_df %>% 
-  select(one_of(binary_vars_pos_6_has_had), age, gender, result, xrayTestService, petScanService)
-  
-train_test <- train_test_reset(.1, has_had_df_popular)
-train <- train_test$train
-test <- train_test$test
-
-library(klaR)
-set.seed(1991)
-model_nb_5 <- NaiveBayes(result~., data=train)
-
-summary(model_nb_5)
-# print(model_nb_1)
-prediction_nb_5 <- predict(model_nb_5, test)
-
-evaluate_model(test, prediction_nb_5)
-```
-
-
-## sixth approach: Balance the dataset and try a logit model
-
-Since there are so few positive cases, I'm going to take my test sample and then break it down to a 1:1, 1:2, or 1:3 postitive to negative ratio. This will allow me to reduce training time, and, hopefully, make more accurate models.
+I created a function to quickly balance my training set:
 
 ```{r}
 balance_df <- function(df, ratio = 1) {
@@ -712,41 +392,35 @@ balance_df <- function(df, ratio = 1) {
 ```
 
 ```{r}
-run_nb  <- function(df, partition) {
-  train_test <- train_test_reset(partition, df)
+train_test <- train_test(df, .5)
+train_base_5 <- train_test$train
+test_base_5 <- train_test$test
 
-  train <- balance_df(train_test$train)
-  
-  set.seed(1991)
-  model <- NaiveBayes(result~., data=train)
-  
-  # summary(model_nb_6)
-  # print(model_nb_1)
-  prediction <- predict(model, train_test$test)
-  
-  evaluate_model(train_test$test, prediction)
+train <- balance_df(train_base_5)
+train <- remove_unhelpful_factors(train)
 
-}
+set.seed(1991)
+model <- klaR::NaiveBayes(result~., data=train)
 
-# nb_6 <- run_nb(df, .8)
-nb_7 <- run_nb(df, .5)
+prediction_nb_2 <- predict(model, test_base_5)
 
-# nb_6
-nb_7
+evaluate_model(train_test$test, prediction)
 ```
 
-## Attempt eight logit regression
+The under sampling method worked quite well. The model predicts true-positives 70.1% of the time, and has false negatives 11.6% of the time. This model meets the requirements of the model.
 
-This took me a bit longer to figure out. Logit models just give probabilities, rather than specific outputs, so it took me a bit to figure out that I had to convert the probabilities 
-```{r}
-train_test <- train_test_reset(.5, df)
-train <- balance_df(train_test$train)
-# skimr::skim(train) %>% as_tibble %>% arrange(n_unique)
+## Model 3: Logit Experimentation
+
+Yes, previous model met the requirements, but Naive Bayes can be a bit of a black box. A logit model is a bit easier to interperet, and, in this case, has significantly better performance. 
+
+A logit model is a bit more sensitive to the input data than Naive Bayes and has some different outputs so the code to run and interpret differs a bit from Naive Bayes.
+
+```{r, message=FALSE, warning=FALSE}
 valid_cols <- train %>% 
   summarise_all(n_distinct) %>% 
   t %>%
   as.data.frame %>% 
-  rownames_to_column() %>% 
+  rownames_to_column %>% 
   rename(value = V1) %>% 
   filter(value > 1) %>% 
   pull(rowname)
@@ -755,144 +429,43 @@ train %<>%
   dplyr::select(one_of(valid_cols))
 
 set.seed(1991)
-model_l_8 <- glm(result~., family=binomial(link='logit'), 
+model_l_3 <- glm(result~., family=binomial(link='logit'), 
                  data=train)
 
-summary(model_l_8)
+prediction_l_3 <- predict(model_l_8, test_base_5, type='response')
 
-prediction_l_8 <- predict(model_l_8, train_test$test, type='response')
-str(prediction_l_8)
+test_base_5$prediction <- prediction_l_3
 
-test$prediction <- prediction_l_8
-summary(prediction_l_8)
-
-ggplot(test, aes(prediction)) +
-  geom_histogram()
-
-test %>% 
-  mutate(prediction = if_else(prediction <.5, 'no', 'yes'),
-         check = (result == prediction)) %>% 
+test_base_5 %>% 
+  mutate(prediction_yn = if_else(prediction <.5, 'no', 'yes'),
+         check = (result == prediction_yn)) %>% 
   group_by(result) %>% 
-  count_pct(check)
+  count(check) %>% 
+  mutate(percent = n / sum(n),
+         percent = scales::percent(percent))
 
 ```
 
-## Attempt 9 logit regression remove lots of unhelpful variables
+Here we see the true positive performance is slightly improved, whereas the false negatives have also increased. Relative to Naive Bayes, logit is nice since it gives probabilities instead of raw outputs. Using a ROC curve, we can see how setting the probability threshold will impact our type 1 and type 2 errors. Not knowing the preference of type 1 and type 2 errors, I decided to keep the threshold at `.5`.
 
-```{r}
-train_test <- train_test_reset(.5, df)
-train <- balance_df(train_test$train)
-# skimr::skim(train) %>% as_tibble %>% arrange(n_unique)
-valid_cols <- train %>% 
-  summarise_all(n_distinct) %>% 
-  t %>%
-  as.data.frame %>% 
-  rownames_to_column() %>% 
-  rename(value = V1) %>% 
-  filter(value > 1) %>% 
-  pull(rowname)
-
-train %<>% 
-  dplyr::select(one_of(valid_cols))
-
-most_varied <- train %>%
-  dplyr::select(-result) %>%
-  map(table, train$result) %>%
-  map(prop.table) %>%
-  map_dbl(min) %>% 
-  enframe %>% 
-  arrange(desc(value))
-
-sliced_varied <- most_varied %>% 
-  slice(1:138) %>% 
-  pull(name)
-
-train %<>% 
-  dplyr::select(result, one_of(sliced_varied))
-
-set.seed(1991)
-model_l_9 <- glm(result~., family=binomial(link='logit'), 
-                 data=train)
-
-summary(model_l_9)
-
-prediction_l_9 <- predict(model_l_9, train_test$test, type='response')
-
-test$prediction <- prediction_l_9
-
-test %>% 
-  mutate(prediction = if_else(prediction <.5, 'no', 'yes'),
-         check = (result == prediction)) %>% 
-  group_by(result) %>% 
-  count_pct(check)
-
-test %>% 
-  mutate(prediction = if_else(prediction <.1, 'no', 'yes'),
-         check = (result == prediction)) %>% 
-  count()
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+library(plotROC)
+test_base_5 %>%
+  mutate(result = if_else(result == 'no', 0, 1)) %>% 
+  ggplot(aes(d = result, m = prediction)) +
+    geom_roc()
 ```
+# Conclusion and next steps: 
 
-## Attempt 9 logit regression remove lots of unhelpful variables
-extract statistically significant pvalues of coeff, used model 8 since it has more variables
+Builing this model was a great learning experience. New datasets always produce new chalenges. I was surprised that manipulating the training set -- rather than focusing on feature selection -- ended up being the most effective way of improving accuracy. 
 
-```{r}
-signif_vars_only <- coef(summary(model_l_9))[,4] %>%  # 
-  enframe %>% 
-  filter(value <= .05) %>%
-  slice(-1) %>% 
-  mutate(name = str_sub(name, 1, -2)) %>% 
-  pull(name)
-  
-train_test <- train_test_reset(.5, df)
+While this model meets the specified requirements, there are a number of approaches I did not have time to investigate:
 
-train <- balance_df(train_test$train)
-glimpse(train)
+- Using the letter of the visitID as its own variable.
+- Getting to know the conditions better. 
+- Over sampling
+- Cross fold validation
+- Create easy, dynamic functions for easier feature selection
 
-train %<>% 
-  dplyr::select(result,one_of(signif_vars_only))
 
-model_l_10 <- glm(result~., family=binomial(link='logit'), 
-                 data=train)
-
-summary(model_l_10)
-
-prediction_l_10 <- predict(model_l_10, train_test$test, type='response')
-
-train_test$test$prediction <- prediction_l_10
-
-train_test$test %>% 
-  mutate(prediction = if_else(prediction <.5, 'no', 'yes'),
-         check = (result == prediction)) %>% 
-  group_by(result) %>% 
-  count_pct(check)
-  
-```
-
-```{r}
-train_test <- train_test_reset(.5, df)
-train <- balance_df(train_test$train)
-
-train %<>% 
-  dplyr::select(result, one_of(signif_vars_only))
-
-model_l_10 <- glm(result~., family=binomial(link='logit'), 
-                 data=train)
-
-summary(model_l_10)
-
-prediction_l_10 <- predict(model_l_10, train_test$test, type='response')
-
-train_test$test$prediction <- prediction_l_10
-
-train_test$test %>% 
-  mutate(prediction = if_else(prediction <.5, 'no', 'yes'),
-         check = (result == prediction)) %>% 
-  group_by(result) %>% 
-  count_pct(check)
-```
-
-dot product
-matrix multiplication
-eigen values / vectors 
-diagonalize matrix
 
