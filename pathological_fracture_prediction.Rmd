@@ -7,7 +7,7 @@ output: html_notebook
 
 # Introduction
 
-I was asked to build a predictive model for pathological fractures. I ran a number of models before getting above 50% accuracy. The key to getting predictions greater than 66% accuracy was under-sampling the training data. In addition to increasing model accuracy, under-sampling also significantly reduced the time it took to train my models. The model can certainly be improved and there are a number of approaches, models, and variable manipulations I would like to attempt on this dataset in the future.
+I was asked to build a predictive model for pathological fractures. I ran a number of models before getting above 50% accuracy. The key to getting predictions greater than 66% accuracy was under-sampling the training data. In addition to increasing model accuracy, under-sampling also significantly reduced the time it took to train my models. The model can certainly be improved and there are a number of approaches, models, and variable manipulations I would like to attempt on this data set in the future.
 
 The following is a step-by-step walk through of how I approached, cleaned, prepared, and modeled the data. What is shown is a subset of my code. The full analysis can be found on my [github page](https://github.com/kidman007/pathological_fracture_prediction/blob/full_analysis/pathological_fracture_prediction.Rmd). 
 
@@ -215,39 +215,7 @@ map_dbl(binary_vars_unique, var_max_answer_check) %>%
 ```
 
 
-```{r, eval=FALSE, include=FALSE}
-df %>% 
-  ggplot(aes(result, age)) +
-    geom_boxplot() +
-    labs(title = 'age') +
-    theme_ipsum()
 
-df %>% 
-  ggplot(aes(result, xrayTestService)) +
-    geom_boxplot() +
-    labs(title = 'xrayTestService') +
-    theme_ipsum()
-df %>% 
-  count(xrayTestService)
-
-df %>% 
-  ggplot(aes(result, petScanService)) +
-    geom_boxplot() +
-    labs(title = 'petScanService') +
-    theme_ipsum()
-
-df %>% 
-  ggplot(aes(result, ctTestService)) +
-    geom_boxplot() +
-    labs(title = 'ctTestService') +
-    theme_ipsum()
-
-df %>% 
-  filter(result == 'yes') %>% 
-  count(Calcium, result) %>% 
-  mutate(percent = n / sum(n),
-         percent = scales::percent(percent))
-```
 
 Now that a lot of the general data cleaning has been performed, it's time to ask some basic questions. For instance, how many `result = yes` cases are there in the data set? 
 
@@ -263,9 +231,24 @@ The chart above shows that a very small subset of the data has positive instance
 
 This model will have to find a needle in a haystack.
 
-### Notes:
+### Other Observations:
 
-I examined the variables in a number of ways not shown in this report. I omitted them because my general exploration didn't have many variables that popped out. The continuous variables seem evenly distributed between fracture and non-frature patients. I tried combining and probing the conditions for a long time, but was not able to extract any clear signals myself.
+```{r, echo=TRUE}
+df %>% 
+  ggplot(aes(result, age)) +
+    geom_boxplot() +
+    labs(title = 'age') +
+    theme_ipsum()
+
+df %>% 
+  ggplot(aes(result, xrayTestService)) +
+    geom_boxplot() +
+    scale_y_continuous(limits = c(0, 25)) +
+    labs(title = 'xrayTestService') +
+    theme_ipsum()
+```
+
+My models primarily use the factor variables. But I did notice that the distribution in some of continuous variables, such as age and xrayTestService, have differing distributions between patients with and without fractures.
 
 ```{r, include=FALSE}
 df %<>% 
@@ -373,7 +356,7 @@ I ran the random forest when I left Madison to go to my college reunion in Apple
 
 ## Model 2: The Break Through
 
-The presence of a pathological fracture is a rare event in this data set. I figured that the disproportionate number of negatives must be bloating or confusing the model. I researched unbalanced data sets and found a number of different ways to approach this problem. The most straight-forward was under-sampling. Under-sampling is when you randomly remove data from your training set to even the number of positive and negative cases. I decided on this approach as I was also having performance issues. Alternavite approaches, such as over sampling, would have maintained long model run-times.
+The presence of a pathological fracture is a rare event in this data set. I figured that the disproportionate number of negatives must be bloating or confusing the model. I researched unbalanced data sets and found a number of different ways to approach this problem. The most straight-forward was under-sampling. Under-sampling is when you randomly remove data from your training set to even the number of positive and negative cases. I decided on this approach as I was also having performance issues. Alternative approaches, such as over sampling, would have maintained long model run-times.
 
 I created a function to quickly balance my training set:
 
@@ -411,7 +394,7 @@ The under sampling method worked quite well. The model predicts true-positives 7
 
 ## Model 3: Logit Experimentation
 
-Yes, previous model met the requirements, but Naive Bayes can be a bit of a black box. A logit model is a bit easier to interperet, and, in this case, runs significantly faster. 
+Yes, previous model met the requirements, but Naive Bayes can be a bit of a black box. A logit model is a bit easier to interpret, and, in this case, runs significantly faster. 
 
 A logit model is a bit more sensitive to the input data than Naive Bayes and has some different outputs. As a result, I had to do some extra cleaning of the training set and rewriting of my interpretation function.
 
@@ -459,7 +442,7 @@ ordered_variables <- broom::tidy(model_l_3) %>%
 ordered_variables
 ```
 
-Above we can see `r ordered_variables %>% slice(2:4) %>% pull(term)` are most significant variables. Looking the codes up on the [NCI Thesaurus](https://ncit.nci.nih.gov/ncitbrowser/pages/home.jsf?version=17.04d) we find that the most significant conditions were: general osteoperosis, rehabilitation, and general falls. These variables make sense as osteoporosis is a bone disease, while falls and rehab are often associated with breaking bones.
+Above we can see `r ordered_variables %>% slice(2:4) %>% pull(term)` are most significant variables. Looking the codes up on the [NCI Thesaurus](https://ncit.nci.nih.gov/ncitbrowser/pages/home.jsf?version=17.04d) we find that the most significant conditions were: general osteoporosis, rehabilitation, and general falls. These variables make sense as osteoporosis is a bone disease, while falls and rehab are often associated with breaking bones.
 
 ### Last steps
 
@@ -474,7 +457,7 @@ test_base_5 %>%
 ```
 # Conclusion and next steps: 
 
-Builing this model was a great learning experience. New datasets always produce new chalenges. I was surprised that manipulating the training set -- rather than focusing on feature selection -- ended up being the most effective way of improving accuracy. 
+Building this model was a great learning experience. New data sets always produce new challenges. I was surprised that manipulating the training set -- rather than focusing on feature selection -- ended up being the most effective way of improving accuracy. 
 
 While this model meets the specified requirements, there are a number of approaches I did not have time to investigate:
 
