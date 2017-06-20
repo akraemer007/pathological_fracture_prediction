@@ -1,8 +1,10 @@
 ---
 title: "Pathological Fracture Prediction"
-author: Andrew Kraemer
-date: 2017-06-20
-output: html_notebook
+author: "Andrew Kraemer"
+date: '2017-06-20'
+output:
+  html_document: default
+  html_notebook: default
 ---
 
 # Introduction
@@ -232,20 +234,22 @@ The chart above shows that a very small subset of the data has positive instance
 This model will have to find a needle in a haystack.
 
 ### Other Observations:
+My models primarily use the factor variables. But I did notice that the distribution in some of continuous variables, such as age and xrayTestService, have differing distributions between patients with and without fractures.
 
-```{r, echo=TRUE}
-df %>% 
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+plot1 <- df %>% 
   ggplot(aes(result, age)) +
     geom_boxplot() +
     labs(title = 'age') +
     theme_ipsum()
 
-df %>% 
+plot2 <- df %>% 
   ggplot(aes(result, xrayTestService)) +
     geom_boxplot() +
     scale_y_continuous(limits = c(0, 25)) +
     labs(title = 'xrayTestService') +
     theme_ipsum()
+gridExtra::grid.arrange(plot1, plot2, ncol=2)
 ```
 
 My models primarily use the factor variables. But I did notice that the distribution in some of continuous variables, such as age and xrayTestService, have differing distributions between patients with and without fractures.
@@ -258,7 +262,7 @@ df %<>%
 
 # Training Data Setup
 
-The first step in a predictive model is to separate the data between what is going to be trained and what is going to be tested. It's important to do this randomly to avoid accidentally biasing the data. Furthermore, it is important to maintain a balance of your outcome variable between the train and test data sets. I do that here using the famous `caret` package. I first decided to slit the data set into .1 train .9 test, due to the size of the data set and number of values.
+The first step in a predictive model is to separate the data between what is going to be trained and what is going to be tested. It's important to do this randomly to avoid accidentally biasing the data. Furthermore, it is important to maintain a balance of your outcome variable between the train and test data sets. I do that here using the famous `caret` package. I first decided to slit the data set into .1 train .9 test, due to the size of the data set and number of variables.
 
 ```{r}
 train_test <- function(df, partition) {
@@ -330,7 +334,7 @@ evaluate_model <- function(test, prediction) {
 
 Many of my preliminary data exploration were somewhat disappointing. Outside of what is shown in this report, I explored a number of the variables looking for a relationship with `result = yes`, but nothing stood out. As such, I decided to try a model with all of the binary variables to see what would happen. I used Naive Bayes as it is generally a performant and easy to use model.
 
-```{r, message=FALSE, warning=FALSE}
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
 train <- remove_unhelpful_factors(train_base_1)
 test <- test_base_1
 
@@ -360,7 +364,7 @@ The presence of a pathological fracture is a rare event in this data set. I figu
 
 I created a function to quickly balance my training set:
 
-```{r}
+```{r, echo=TRUE}
 balance_df <- function(df, ratio = 1) {
   
   train_pos <- filter(df, result == 'yes')
@@ -374,7 +378,7 @@ balance_df <- function(df, ratio = 1) {
 
 ```
 
-```{r}
+```{r, echo=TRUE}
 test_train <- train_test(df, .5)
 train_base_5 <- test_train$train
 test_base_5 <- test_train$test
@@ -398,7 +402,7 @@ Yes, previous model met the requirements, but Naive Bayes can be a bit of a blac
 
 A logit model is a bit more sensitive to the input data than Naive Bayes and has some different outputs. As a result, I had to do some extra cleaning of the training set and rewriting of my interpretation function.
 
-```{r, message=FALSE, warning=FALSE}
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
 valid_cols <- train %>% 
   summarise_all(n_distinct) %>% 
   t %>%
@@ -415,7 +419,7 @@ set.seed(1991)
 model_l_3 <- glm(result~., family=binomial(link='logit'), 
                  data=train)
 
-prediction_l_3 <- predict(model_l_8, test_base_5, type='response')
+prediction_l_3 <- predict(model_l_3, test_base_5, type='response')
 
 test_base_5$prediction <- prediction_l_3
 
