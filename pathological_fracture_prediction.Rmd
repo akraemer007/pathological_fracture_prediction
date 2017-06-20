@@ -148,7 +148,7 @@ non_binary_vars <- c('visitId', 'age', 'result', 'xrayTestService', 'petScanServ
 binary_vars <- names(df)[!(names(df) %in% non_binary_vars)]
 
 max_cols <- df %>% 
-  select(-one_of(non_binary_vars), gender) %>% 
+  dplyr::select(-one_of(non_binary_vars), gender) %>% 
   summarise_all(max) %>% 
   t %>%
   as.data.frame %>% 
@@ -197,7 +197,7 @@ binary_vars_unique <- binary_vars %>%
 # get the max number of `1s` a variable can have across the different types
 var_max_answer_check <- function(var, df = df_raw) {
   df %>% 
-  select(starts_with(var)) %>% 
+  dplyr::select(starts_with(var)) %>% 
   rowSums %>% 
   max
 }
@@ -247,9 +247,6 @@ df %>%
   count(Calcium, result) %>% 
   mutate(percent = n / sum(n),
          percent = scales::percent(percent))
-  
-  
-
 ```
 
 Now that a lot of the general data cleaning has been performed, it's time to ask some basic questions. For instance, how many `result = yes` cases are there in the data set? 
@@ -269,8 +266,7 @@ This model will have to find a needle in a haystack.
 ```{r, include=FALSE}
 df %<>% 
   mutate_at(binary_vars, as.factor) %>% 
-  mutate(result = as.factor(result)) %>% 
-  dplyr::select(-visitId)
+  mutate(result = as.factor(result))
 ```
 
 # Training Data Setup
@@ -291,9 +287,9 @@ train_test <- function(df, partition) {
   return(output)
 }
 
-train_test <- train_test(df, .1)
-train_base_1 <- train_test$train
-test_base_1 <- train_test$test
+test_train <- train_test(df, .1)
+train_base_1 <- test_train$train
+test_base_1 <- test_train$test
 
 ```
 
@@ -352,8 +348,6 @@ test <- test_base_1
 set.seed(1991)
 model_nb_1 <- klaR::NaiveBayes(result~., data=train)
 
-summary(model_nb_1)
-# print(model_nb_1)
 prediction_nb_1 <- predict(model_nb_1, test)
 
 evaluate_model(test, prediction_nb_1)
@@ -392,9 +386,9 @@ balance_df <- function(df, ratio = 1) {
 ```
 
 ```{r}
-train_test <- train_test(df, .5)
-train_base_5 <- train_test$train
-test_base_5 <- train_test$test
+test_train <- train_test(df, .5)
+train_base_5 <- test_train$train
+test_base_5 <- test_train$test
 
 train <- balance_df(train_base_5)
 train <- remove_unhelpful_factors(train)
@@ -404,7 +398,7 @@ model <- klaR::NaiveBayes(result~., data=train)
 
 prediction_nb_2 <- predict(model, test_base_5)
 
-evaluate_model(train_test$test, prediction)
+evaluate_model(test_base_5, prediction_nb_2)
 ```
 
 The under sampling method worked quite well. The model predicts true-positives 70.1% of the time, and has false negatives 11.6% of the time. This model meets the requirements of the model.
@@ -468,4 +462,11 @@ While this model meets the specified requirements, there are a number of approac
 - Create easy, dynamic functions for easier feature selection
 
 
+```{r, echo=TRUE}
+test_base_5 %>%
+  mutate(prediction_yn = if_else(prediction <.5, 'no', 'yes'),
+         check = (result == prediction_yn)) %>% 
+  dplyr::select(visitId, result, prediction_yn, check) %>% 
+  write_csv('final_model_results.csv')
+```
 
